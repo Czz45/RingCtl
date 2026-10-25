@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">变焦环控制</string>
+    <string name="acc_desc">利用变焦环模拟手指滑动/滚动操作。开启后可用物理变焦环滚动列表、翻页。</string>
+</resources>

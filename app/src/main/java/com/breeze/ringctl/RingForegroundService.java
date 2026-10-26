@@ -361,13 +361,17 @@ public class RingForegroundService extends Service implements SensorEventListene
         }
     }
 
-    /** 转动震动：固定 10ms 轻震，内部限流最快 120ms 一次 */
+    /**
+     * 转动震动：每次触发震一次。
+     * 强度和时长读用户设置；仅做一个极短的保护间隔（80ms），
+     * 防止连续转动时马达过载，正常使用感知不到这个限制。
+     */
     private void doHaptic() {
         if (!Cfg.haptic(this)) {
             return;
         }
         long now = SystemClock.elapsedRealtime();
-        if (now - lastHapticMs < 120L) {
+        if (now - lastHapticMs < 80L) {
             return;
         }
         lastHapticMs = now;
@@ -378,10 +382,12 @@ public class RingForegroundService extends Service implements SensorEventListene
             if (vibrator == null || !vibrator.hasVibrator()) {
                 return;
             }
+            int ms = Math.max(5, Math.min(100, Cfg.hapticMs(this)));
+            int amp = Math.max(10, Math.min(255, Cfg.hapticAmp(this)));
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator.vibrate(VibrationEffect.createOneShot(15, 180));
+                vibrator.vibrate(VibrationEffect.createOneShot(ms, amp));
             } else {
-                vibrator.vibrate(10);
+                vibrator.vibrate(ms);
             }
         } catch (Exception ignored) {
         }

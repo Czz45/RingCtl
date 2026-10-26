@@ -160,6 +160,25 @@ public class Cfg {
         sp(c).edit().putBoolean("haptic", v).apply();
     }
 
+    /** 震动强度 1~255 */
+    public static int hapticAmp(Context c) {
+        return sp(c).getInt("haptic_amp", 180);
+    }
+
+    public static void setHapticAmp(Context c, int v) {
+        sp(c).edit().putInt("haptic_amp", v).apply();
+    }
+
+    /** 震动时长（毫秒） */
+    public static int hapticMs(Context c) {
+        return sp(c).getInt("haptic_ms", 15);
+    }
+
+    public static void setHapticMs(Context c, int v) {
+        sp(c).edit().putInt("haptic_ms", v).apply();
+    }
+
+
     // ==================== 快捷暂停 ====================
 
     /**

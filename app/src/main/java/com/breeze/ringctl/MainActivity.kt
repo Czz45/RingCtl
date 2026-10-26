@@ -89,6 +89,8 @@ fun RingCtlScreen(activity: ComponentActivity) {
     var enabled by remember { mutableStateOf(Cfg.enabled(ctx)) }
     var reverse by remember { mutableStateOf(Cfg.reverse(ctx)) }
     var haptic by remember { mutableStateOf(Cfg.haptic(ctx)) }
+    var hapticAmp by remember { mutableIntStateOf(Cfg.hapticAmp(ctx)) }
+    var hapticMs by remember { mutableIntStateOf(Cfg.hapticMs(ctx)) }
     var mode by remember { mutableIntStateOf(Cfg.mode(ctx)) }
     var axis by remember { mutableIntStateOf(Cfg.axis(ctx)) }
     var sens by remember { mutableFloatStateOf(Cfg.sens(ctx)) }
@@ -222,18 +224,48 @@ fun RingCtlScreen(activity: ComponentActivity) {
                     reverse = it
                     Cfg.setReverse(ctx, it)
                 }
-                Divider(color = CBorder.copy(alpha = 0.3f))
+            }
+            Spacer(Modifier.height(16.dp))
+
+            // ---------- 震动反馈 ----------
+            SectionLabel("震动反馈")
+            SettingsCard {
                 SwitchRow(
                     icon = Icons.Filled.Vibration,
                     title = "转动震动",
-                    subtitle = "每触发一次滑动轻震一下",
+                    subtitle = "每触发一次滑动震一下",
                     checked = haptic
                 ) {
                     haptic = it
                     Cfg.setHaptic(ctx, it)
                 }
+                if (haptic) {
+                    Divider(color = CBorder.copy(alpha = 0.3f))
+                    SliderRow(
+                        icon = Icons.Filled.FitnessCenter,
+                        title = "震动强度",
+                        valueText = "$hapticAmp",
+                        value = hapticAmp.toFloat(),
+                        range = 10f..255f,
+                        onChange = {
+                            hapticAmp = it.toInt()
+                            Cfg.setHapticAmp(ctx, hapticAmp)
+                        }
+                    )
+                    Divider(color = CBorder.copy(alpha = 0.3f))
+                    SliderRow(
+                        icon = Icons.Filled.Timelapse,
+                        title = "震动时长",
+                        valueText = "$hapticMs 毫秒",
+                        value = hapticMs.toFloat(),
+                        range = 5f..100f,
+                        onChange = {
+                            hapticMs = it.toInt()
+                            Cfg.setHapticMs(ctx, hapticMs)
+                        }
+                    )
+                }
             }
-
             Spacer(Modifier.height(16.dp))
 
             // ---------- 模式 ----------

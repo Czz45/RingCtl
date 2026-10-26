@@ -11,6 +11,7 @@ import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -156,23 +157,41 @@ fun RingCtlScreen(activity: ComponentActivity, onShowAbout: () -> Unit = {}) {
             Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
+                .windowInsetsPadding(WindowInsets.systemBars)
                 .padding(horizontal = 16.dp)
-                .padding(top = 48.dp, bottom = 24.dp)
+                .padding(top = 16.dp, bottom = 24.dp)
         ) {
-            // ---------- 标题 ----------
-            Text(
-                "变焦环控制",
-                fontSize = 26.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = CForeground
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "把物理变焦环当作通用旋钮",
-                fontSize = 14.sp,
-                color = CMutedFg
-            )
-
+// ---------- 标题栏 ----------
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Top
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "变焦环控制",
+                        fontSize = 26.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = CForeground
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "把物理变焦环当作通用旋钮",
+                        fontSize = 14.sp,
+                        color = CMutedFg
+                    )
+                }
+                IconButton(
+                    onClick = onShowAbout,
+                    modifier = Modifier.size(44.dp)
+                ) {
+                    Icon(
+                        Icons.Filled.Info,
+                        contentDescription = "关于",
+                        tint = CMutedFg,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+            }
             Spacer(Modifier.height(20.dp))
 
 // ---------- Root 模式 ----------
@@ -537,17 +556,6 @@ Divider(color = CBorder.copy(alpha = 0.3f))
                     Text("· ", color = CAccent, fontSize = 13.sp)
                     Text(it, color = CMutedFg, fontSize = 13.sp, lineHeight = 19.sp)
                 }
-            }
-            Spacer(Modifier.height(16.dp))
-
-            // ---------- 关于入口 ----------
-            SettingsCard {
-                AboutRow(
-                    icon = Icons.Filled.Info,
-                    title = "关于",
-                    value = "v" + versionName + (if (updateInfo != null) " · 有新版本" else ""),
-                    onClick = onShowAbout
-                )
             }
         }
 }
@@ -1076,6 +1084,9 @@ fun AboutScreen(activity: ComponentActivity, onBack: () -> Unit) {
     var updateInfo by remember { mutableStateOf<String?>(null) }
     var updateUrl by remember { mutableStateOf(UpdateChecker.URL_RELEASES) }
 
+    // 系统返回键 → 关闭关于页
+    BackHandler(enabled = true) { onBack() }
+
     // 进入页面自动检查一次
     LaunchedEffect(Unit) {
         UpdateChecker.check(ctx, object : UpdateChecker.Callback {
@@ -1094,6 +1105,7 @@ fun AboutScreen(activity: ComponentActivity, onBack: () -> Unit) {
         Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
+            .windowInsetsPadding(WindowInsets.systemBars)
     ) {
         // 顶栏
         Row(

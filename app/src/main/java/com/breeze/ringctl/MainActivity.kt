@@ -103,11 +103,29 @@ fun RingCtlScreen(activity: ComponentActivity) {
     var gestDur by remember { mutableIntStateOf(Cfg.gestureDurationMs(ctx)) }
     var maxSwipe by remember { mutableIntStateOf(Cfg.maxSwipePx(ctx)) }
     var pausedLeft by remember { mutableIntStateOf(0) }
+    var versionName by remember { mutableStateOf(UpdateChecker.currentVersion(ctx)) }
+    var checking by remember { mutableStateOf(false) }
+    var updateInfo by remember { mutableStateOf<String?>(null) }
+    var updateUrl by remember { mutableStateOf(UpdateChecker.URL_RELEASES) }
 
     // 轮询状态
     // 只检测一次 root（结果内部缓存）
     LaunchedEffect(Unit) {
         hasRoot = withContext(Dispatchers.IO) { RootHelper.hasRoot() }
+    }
+
+    // 启动时静默检查更新
+    LaunchedEffect(Unit) {
+        UpdateChecker.check(ctx, object : UpdateChecker.Callback {
+            override fun onUpdate(latest: String, url: String, log: String) {
+                updateInfo = latest
+                updateUrl = url
+            }
+
+            override fun onLatest(cur: String) {}
+
+            override fun onFail(reason: String) {}
+        })
     }
 
     LaunchedEffect(Unit) {
@@ -515,7 +533,96 @@ Divider(color = CBorder.copy(alpha = 0.3f))
                     Text(it, color = CMutedFg, fontSize = 13.sp, lineHeight = 19.sp)
                 }
             }
-        }
+Spacer(Modifier.height(24.dp))
+
+            // ---------- 关于 ----------
+            SectionLabel("关于")
+            SettingsCard {
+                AboutRow(
+                    icon = Icons.Filled.Info,
+                    title = "版本",
+                    value = "v" + versionName,
+                    onClick = null
+                )
+                if (updateInfo != null) {
+                    Divider(color = CBorder.copy(alpha = 0.3f))
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { UpdateChecker.openUrl(ctx, updateUrl) }
+                            .heightIn(min = 48.dp)
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Filled.SystemUpdate,
+                            contentDescription = null,
+                            tint = CAccent,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(14.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "发现新版本 $updateInfo",
+                                fontSize = 15.sp,
+                                color = CAccent,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text("点击前往下载", fontSize = 12.sp, color = CMutedFg)
+                        }
+                        Icon(
+                            Icons.Filled.ChevronRight,
+                            contentDescription = null,
+                            tint = CMutedFg,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+                Divider(color = CBorder.copy(alpha = 0.3f))
+                AboutRow(
+                    icon = Icons.Filled.CheckCircle,
+                    title = "检查更新",
+                    value = if (checking) "检查中…" else "点击检查",
+                    onClick = {
+                        if (!checking) {
+                            checking = true
+                            UpdateChecker.check(ctx, object : UpdateChecker.Callback {
+                                override fun onUpdate(latest: String, url: String, log: String) {
+                                    checking = false
+                                    updateInfo = latest
+                                    updateUrl = url
+                                }
+
+                                override fun onLatest(cur: String) {
+                                    checking = false
+                                    updateInfo = null
+                                    toast(ctx, "已是最新版本 v$cur")
+                                }
+
+                                override fun onFail(reason: String) {
+                                    checking = false
+                                    toast(ctx, "检查失败：$reason")
+                                }
+                            })
+                        }
+                    }
+                )
+                Divider(color = CBorder.copy(alpha = 0.3f))
+                AboutRow(
+                    icon = Icons.Filled.Code,
+                    title = "GitHub 仓库",
+                    value = UpdateChecker.REPO,
+                    onClick = { UpdateChecker.openUrl(ctx, UpdateChecker.URL_REPO) }
+                )
+                Divider(color = CBorder.copy(alpha = 0.3f))
+                AboutRow(
+                    icon = Icons.Filled.Person,
+                    title = "酷安",
+                    value = "@橙子味的风",
+                    onClick = { UpdateChecker.openUrl(ctx, UpdateChecker.URL_COOLAPK) }
+                )
+            }        }
     }
 }
 
@@ -798,6 +905,53 @@ private fun SmallBtn(label: String, onClick: () -> Unit) {
 
 
 @Composable
+private fun AboutRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    value: String,
+    onClick: (() -> Unit)?
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .then(
+                if (onClick != null) Modifier.clickable(onClick = onClick)
+                else Modifier
+            )
+            .heightIn(min = 48.dp)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = CMutedFg,
+            modifier = Modifier.size(20.dp)
+        )
+        Spacer(Modifier.width(14.dp))
+        Text(
+            title,
+            fontSize = 15.sp,
+            color = CForeground,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            value,
+            fontSize = 13.sp,
+            color = if (onClick != null) CAccent else CMutedFg
+        )
+        if (onClick != null) {
+            Spacer(Modifier.width(4.dp))
+            Icon(
+                androidx.compose.material.icons.Icons.Filled.ChevronRight,
+                contentDescription = null,
+                tint = CMutedFg,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+    }
+}
+@Composable
 private fun SectionLabel(text: String) {
     Text(
         text,
@@ -940,6 +1094,13 @@ private fun SliderRow(
 }
 
 // ==================== 工具 ====================
+
+/** 简易 toast */
+private fun toast(ctx: Context, msg: String) {
+    android.os.Handler(android.os.Looper.getMainLooper()).post {
+        android.widget.Toast.makeText(ctx, msg, android.widget.Toast.LENGTH_SHORT).show()
+    }
+}
 
 private fun openAccessibility(ctx: Context) {
     try {

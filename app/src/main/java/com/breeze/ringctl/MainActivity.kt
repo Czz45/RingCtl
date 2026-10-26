@@ -68,7 +68,12 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme(colorScheme = AppColors) {
                 Surface(color = CBackground, modifier = Modifier.fillMaxSize()) {
-                    RingCtlScreen(this)
+                    var showAbout by remember { mutableStateOf(false) }
+                    if (showAbout) {
+                        AboutScreen(this) { showAbout = false }
+                    } else {
+                        RingCtlScreen(this) { showAbout = true }
+                    }
                 }
             }
         }
@@ -76,7 +81,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun RingCtlScreen(activity: ComponentActivity) {
+fun RingCtlScreen(activity: ComponentActivity, onShowAbout: () -> Unit = {}) {
     val ctx = activity
 
     var accReady by remember { mutableStateOf(false) }
@@ -533,97 +538,18 @@ Divider(color = CBorder.copy(alpha = 0.3f))
                     Text(it, color = CMutedFg, fontSize = 13.sp, lineHeight = 19.sp)
                 }
             }
-Spacer(Modifier.height(24.dp))
+Spacer(Modifier.height(16.dp))
 
-            // ---------- 关于 ----------
-            SectionLabel("关于")
+            // ---------- 关于入口 ----------
             SettingsCard {
                 AboutRow(
                     icon = Icons.Filled.Info,
-                    title = "版本",
-                    value = "v" + versionName,
-                    onClick = null
+                    title = "关于",
+                    value = "v" + versionName + (if (updateInfo != null) " · 有新版本" else ""),
+                    onClick = onShowAbout
                 )
-                if (updateInfo != null) {
-                    Divider(color = CBorder.copy(alpha = 0.3f))
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .clickable { UpdateChecker.openUrl(ctx, updateUrl) }
-                            .heightIn(min = 48.dp)
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            Icons.Filled.SystemUpdate,
-                            contentDescription = null,
-                            tint = CAccent,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(Modifier.width(14.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                "发现新版本 $updateInfo",
-                                fontSize = 15.sp,
-                                color = CAccent,
-                                fontWeight = FontWeight.Medium
-                            )
-                            Spacer(Modifier.height(2.dp))
-                            Text("点击前往下载", fontSize = 12.sp, color = CMutedFg)
-                        }
-                        Icon(
-                            Icons.Filled.ChevronRight,
-                            contentDescription = null,
-                            tint = CMutedFg,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
-                Divider(color = CBorder.copy(alpha = 0.3f))
-                AboutRow(
-                    icon = Icons.Filled.CheckCircle,
-                    title = "检查更新",
-                    value = if (checking) "检查中…" else "点击检查",
-                    onClick = {
-                        if (!checking) {
-                            checking = true
-                            UpdateChecker.check(ctx, object : UpdateChecker.Callback {
-                                override fun onUpdate(latest: String, url: String, log: String) {
-                                    checking = false
-                                    updateInfo = latest
-                                    updateUrl = url
-                                }
-
-                                override fun onLatest(cur: String) {
-                                    checking = false
-                                    updateInfo = null
-                                    toast(ctx, "已是最新版本 v$cur")
-                                }
-
-                                override fun onFail(reason: String) {
-                                    checking = false
-                                    toast(ctx, "检查失败：$reason")
-                                }
-                            })
-                        }
-                    }
-                )
-                Divider(color = CBorder.copy(alpha = 0.3f))
-                AboutRow(
-                    icon = Icons.Filled.Code,
-                    title = "GitHub 仓库",
-                    value = UpdateChecker.REPO,
-                    onClick = { UpdateChecker.openUrl(ctx, UpdateChecker.URL_REPO) }
-                )
-                Divider(color = CBorder.copy(alpha = 0.3f))
-                AboutRow(
-                    icon = Icons.Filled.Person,
-                    title = "酷安",
-                    value = "@橙子味的风",
-                    onClick = { UpdateChecker.openUrl(ctx, UpdateChecker.URL_COOLAPK) }
-                )
-            }        }
-    }
+            }
+        }
 }
 
 // ==================== 组件 ====================
@@ -1141,3 +1067,232 @@ private fun isBatteryUnrestricted(ctx: Context): Boolean {
 }
 
 private fun String.toUri(): android.net.Uri = android.net.Uri.parse(this)
+@Composable
+fun AboutScreen(activity: ComponentActivity, onBack: () -> Unit) {
+    val ctx = activity
+    var versionName by remember { mutableStateOf(UpdateChecker.currentVersion(ctx)) }
+    var checking by remember { mutableStateOf(false) }
+    var updateInfo by remember { mutableStateOf<String?>(null) }
+    var updateUrl by remember { mutableStateOf(UpdateChecker.URL_RELEASES) }
+
+    // 进入页面自动检查一次
+    LaunchedEffect(Unit) {
+        UpdateChecker.check(ctx, object : UpdateChecker.Callback {
+            override fun onUpdate(latest: String, url: String, log: String) {
+                updateInfo = latest
+                updateUrl = url
+            }
+
+            override fun onLatest(cur: String) {}
+
+            override fun onFail(reason: String) {}
+        })
+    }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+    ) {
+        // 顶栏
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 56.dp)
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(
+                    Icons.Filled.ArrowBack,
+                    contentDescription = "返回",
+                    tint = CForeground
+                )
+            }
+            Text(
+                "关于",
+                fontSize = 19.sp,
+                fontWeight = FontWeight.Medium,
+                color = CForeground
+            )
+        }
+
+        Column(Modifier.padding(horizontal = 16.dp)) {
+            // 应用信息
+            Spacer(Modifier.height(8.dp))
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    Modifier
+                        .size(64.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(CAccent.copy(alpha = 0.15f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Filled.SettingsRemote,
+                        contentDescription = null,
+                        tint = CAccent,
+                        modifier = Modifier.size(32.dp)
+                    )
+                }
+                Spacer(Modifier.width(16.dp))
+                Column {
+                    Text(
+                        "变焦环控制",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = CForeground
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "RingCtl  v$versionName  Beta",
+                        fontSize = 13.sp,
+                        color = CMutedFg
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+            Text(
+                "把小米 17 Ultra 徕卡版的物理变焦环，当作通用旋钮使用。",
+                fontSize = 13.sp,
+                color = CMutedFg,
+                lineHeight = 20.sp
+            )
+
+            Spacer(Modifier.height(24.dp))
+
+            // 更新
+            SectionLabel("更新")
+            SettingsCard {
+                if (updateInfo != null) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { UpdateChecker.openUrl(ctx, updateUrl) }
+                            .heightIn(min = 48.dp)
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Filled.SystemUpdate,
+                            contentDescription = null,
+                            tint = CAccent,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(14.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "发现新版本 $updateInfo",
+                                fontSize = 15.sp,
+                                color = CAccent,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text("点击前往下载", fontSize = 12.sp, color = CMutedFg)
+                        }
+                        Icon(
+                            Icons.Filled.ChevronRight,
+                            contentDescription = null,
+                            tint = CMutedFg,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Divider(color = CBorder.copy(alpha = 0.3f))
+                }
+                AboutRow(
+                    icon = Icons.Filled.CheckCircle,
+                    title = "检查更新",
+                    value = if (checking) "检查中…" else "当前最新",
+                    onClick = {
+                        if (!checking) {
+                            checking = true
+                            UpdateChecker.check(ctx, object : UpdateChecker.Callback {
+                                override fun onUpdate(latest: String, url: String, log: String) {
+                                    checking = false
+                                    updateInfo = latest
+                                    updateUrl = url
+                                }
+
+                                override fun onLatest(cur: String) {
+                                    checking = false
+                                    updateInfo = null
+                                    toast(ctx, "已是最新版本 v$cur")
+                                }
+
+                                override fun onFail(reason: String) {
+                                    checking = false
+                                    toast(ctx, "检查失败：$reason")
+                                }
+                            })
+                        }
+                    }
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // 作者
+            SectionLabel("作者")
+            SettingsCard {
+                AboutRow(
+                    icon = Icons.Filled.Code,
+                    title = "GitHub",
+                    value = UpdateChecker.REPO,
+                    onClick = { UpdateChecker.openUrl(ctx, UpdateChecker.URL_REPO) }
+                )
+                Divider(color = CBorder.copy(alpha = 0.3f))
+                AboutRow(
+                    icon = Icons.Filled.Person,
+                    title = "酷安",
+                    value = UpdateChecker.COOLAPK_NAME,
+                    onClick = { UpdateChecker.openUrl(ctx, UpdateChecker.URL_COOLAPK) }
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // 开源
+            SectionLabel("开源致谢")
+            SettingsCard {
+                Text(
+                    "本项目的传感器方案参考了以下开源项目：",
+                    fontSize = 12.sp,
+                    color = CMutedFg,
+                    modifier = Modifier.padding(16.dp)
+                )
+                AboutRow(
+                    icon = Icons.Filled.Star,
+                    title = "HyperZoomRing",
+                    value = "NextAlone",
+                    onClick = {
+                        UpdateChecker.openUrl(ctx, "https://github.com/NextAlone/HyperZoomRing")
+                    }
+                )
+                Divider(color = CBorder.copy(alpha = 0.3f))
+                AboutRow(
+                    icon = Icons.Filled.Star,
+                    title = "OmniRing",
+                    value = "TvTjiesen",
+                    onClick = {
+                        UpdateChecker.openUrl(ctx, "https://github.com/TvTjiesen/OmniRing")
+                    }
+                )
+            }
+
+            Spacer(Modifier.height(24.dp))
+
+            Text(
+                "仅限个人学习使用",
+                fontSize = 12.sp,
+                color = CMutedFg,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(Modifier.height(32.dp))
+        }
+    }
+}

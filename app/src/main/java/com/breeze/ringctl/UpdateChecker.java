@@ -27,6 +27,7 @@ public class UpdateChecker {
     public static final String URL_REPO = "https://github.com/" + REPO;
     public static final String URL_RELEASES = "https://github.com/" + REPO + "/releases";
     public static final String URL_COOLAPK = "https://www.coolapk.com/u/26711585";
+    public static final String COOLAPK_NAME = "@橙子味的风";
 
     public interface Callback {
         void onUpdate(String latestVersion, String downloadUrl, String changelog);

@@ -6,7 +6,7 @@
 
 ## 作者
 
-- 酷安：[@橙子味的风](https://www.coolapk.com/u/26711585)
+- 酷安：[frost3322](https://www.coolapk.com/u/26711585)
 - 仓库：[Czz45/RingCtl](https://github.com/Czz45/RingCtl)
 
 ## 功能

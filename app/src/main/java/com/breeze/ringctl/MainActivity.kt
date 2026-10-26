@@ -338,6 +338,18 @@ Divider(color = CBorder.copy(alpha = 0.3f))
                     mode = Cfg.MODE_DRAG
                     Cfg.setMode(ctx, mode)
                 }
+if (hasRoot) {
+                    Divider(color = CBorder.copy(alpha = 0.3f))
+                    ModeRow(
+                        Icons.Filled.Mouse,
+                        "Root 滚轮",
+                        "用 root 发送真实滚轮事件，列表自带惯性，最接近鼠标手感",
+                        mode == Cfg.MODE_ROOT_WHEEL
+                    ) {
+                        mode = Cfg.MODE_ROOT_WHEEL
+                        Cfg.setMode(ctx, mode)
+                    }
+                }
             }
 
             // ---------- 滑动方向 ----------

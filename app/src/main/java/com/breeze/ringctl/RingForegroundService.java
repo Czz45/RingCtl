@@ -57,6 +57,12 @@ public class RingForegroundService extends Service implements SensorEventListene
     private volatile float wheelAccum = 0f;
     private volatile long lastDataMs = 0L;
     private long lastEmitMs = 0L;
+    /** 方向防抖：连续多少帧同向才认 */
+    private static final int DIR_CONFIRM_FRAMES = 2;
+    private int lastDir = 0;
+    private int dirConfirm = 0;
+    /** Root 滚轮模式：上次发出滚轮的时间 */
+    private long lastRootWheelMs = 0L;
     private volatile long cooldownUntilMs = 0L;
     private long lastHapticMs = 0L;
     private Vibrator vibrator;
@@ -202,10 +208,24 @@ public class RingForegroundService extends Service implements SensorEventListene
             return;
         }
 
-        float d = counter - lastCounter;
+float d = counter - lastCounter;
         lastCounter = counter;
 
         if (Math.abs(d) < Cfg.deadzone(this)) {
+            return;
+        }
+
+        // ===== 方向防抖 =====
+        // 来回转时单帧差值可能因噪声/惯性残留翻号，导致反向误触发。
+        // 规则：连续 N 帧方向一致才认，否则丢弃这一帧。
+        int curDir = d > 0 ? 1 : -1;
+        if (curDir == lastDir) {
+            dirConfirm++;
+        } else {
+            dirConfirm = 1;
+            lastDir = curDir;
+        }
+        if (dirConfirm < DIR_CONFIRM_FRAMES) {
             return;
         }
 
@@ -216,7 +236,17 @@ public class RingForegroundService extends Service implements SensorEventListene
         float signedD = reverse ? -d : d;
 
         int mode = Cfg.mode(this);
-        if (mode == Cfg.MODE_SMOOTH || mode == Cfg.MODE_DRAG) {
+        if (mode == Cfg.MODE_ROOT_WHEEL) {
+            float na = wheelAccum + signedD;
+            float unit = Math.max(10f, Cfg.wheelUnit(this));
+            float limit = unit * 4f;
+            if (na > limit) {
+                na = limit;
+            } else if (na < -limit) {
+                na = -limit;
+            }
+            wheelAccum = na;
+        } else if (mode == Cfg.MODE_SMOOTH || mode == Cfg.MODE_DRAG) {
             float px = signedD * Cfg.sens(this) * 0.5f;
             float np = pendingPx + px;
             float totalCap = Cfg.maxSwipePx(this) * 4f;
@@ -302,6 +332,40 @@ public class RingForegroundService extends Service implements SensorEventListene
         int mode = Cfg.mode(this);
         long dur = Math.max(40, Math.min(600, Cfg.gestureDurationMs(this)));
 
+// ===== Root 滚轮模式 =====
+        // 用 root 执行 input roll，发出真正的滚轮事件；列表自带惯性，观感最接近鼠标。
+        // 每次要起进程，所以 100ms 才发一次，累积的量一次发完。
+        if (mode == Cfg.MODE_ROOT_WHEEL) {
+            float acc = wheelAccum;
+            float unit = Math.max(10f, Cfg.wheelUnit(this));
+            if (Math.abs(acc) < unit) {
+                return idle ? TICK_IDLE_MS : TICK_ACTIVE_MS;
+            }
+            if (now - lastRootWheelMs < 100L) {
+                return TICK_ACTIVE_MS;
+            }
+
+            int steps = (int) (acc / unit);
+            if (steps == 0) {
+                steps = acc > 0 ? 1 : -1;
+            }
+            wheelAccum = acc - steps * unit;
+            float cap = unit * 4f;
+            if (wheelAccum > cap) {
+                wheelAccum = cap;
+            } else if (wheelAccum < -cap) {
+                wheelAccum = -cap;
+            }
+
+            boolean ok = RootWheel.roll(steps);
+            if (ok) {
+                lastRootWheelMs = now;
+                lastEmitMs = now;
+            } else {
+                wheelAccum += steps * unit;
+            }
+            return TICK_ACTIVE_MS;
+        }
 // ===== 连续拖拽模式 =====
         // 手指保持按下，位移持续喂进去，页面连续跟随；停止转动后自动抬手
         if (mode == Cfg.MODE_DRAG) {

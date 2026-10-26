@@ -20,10 +20,9 @@ import java.net.URL;
  * 仓库已公开，无需 token。
  */
 public class UpdateChecker {
-
     public static final String REPO = "Czz45/RingCtl";
-    public static final String API_LATEST =
-            "https://api.github.com/repos/" + REPO + "/releases/latest";
+    public static final String API_RELEASES =
+            "https://api.github.com/repos/" + REPO + "/releases?per_page=5";
     public static final String URL_REPO = "https://github.com/" + REPO;
     public static final String URL_RELEASES = "https://github.com/" + REPO + "/releases";
     public static final String URL_COOLAPK = "https://www.coolapk.com/u/26711585";
@@ -53,7 +52,7 @@ public class UpdateChecker {
         new Thread(() -> {
             HttpURLConnection conn = null;
             try {
-                URL url = new URL(API_LATEST);
+                URL url = new URL(API_RELEASES);
                 conn = (HttpURLConnection) url.openConnection();
                 conn.setConnectTimeout(8000);
                 conn.setReadTimeout(8000);
@@ -70,7 +69,7 @@ public class UpdateChecker {
                     return;
                 }
 
-                StringBuilder sb = new StringBuilder();
+StringBuilder sb = new StringBuilder();
                 BufferedReader br = new BufferedReader(
                         new InputStreamReader(conn.getInputStream(), "UTF-8"));
                 String line;
@@ -79,7 +78,22 @@ public class UpdateChecker {
                 }
                 br.close();
 
-                JSONObject json = new JSONObject(sb.toString());
+                // /releases 返回数组，取第一个非 draft 的版本（包含 prerelease）
+                JSONArray list = new JSONArray(sb.toString());
+                JSONObject json = null;
+                for (int i = 0; i < list.length(); i++) {
+                    JSONObject r = list.optJSONObject(i);
+                    if (r == null || r.optBoolean("draft", false)) {
+                        continue;
+                    }
+                    json = r;
+                    break;
+                }
+                if (json == null) {
+                    post(() -> cb.onFail("还没有发布版本"));
+                    return;
+                }
+
                 String tag = json.optString("tag_name", "");
                 if (tag.startsWith("v") || tag.startsWith("V")) {
                     tag = tag.substring(1);
@@ -104,7 +118,6 @@ public class UpdateChecker {
                         }
                     }
                 }
-
                 final String latest = tag;
                 final String dl = download;
                 final String log = body;

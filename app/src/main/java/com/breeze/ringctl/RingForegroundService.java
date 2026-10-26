@@ -180,6 +180,16 @@ public class RingForegroundService extends Service implements SensorEventListene
         }
         boolean ok = sm.registerListener(this, ringSensor, SensorManager.SENSOR_DELAY_GAME);
         lastState = ok ? ("已连接 " + ringSensor.getName()) : "注册监听失败";
+        // 初始化 root 滚轮用的屏幕坐标
+        try {
+            android.util.DisplayMetrics dm = new android.util.DisplayMetrics();
+            android.view.WindowManager wm = (android.view.WindowManager) getSystemService(Context.WINDOW_SERVICE);
+            if (wm != null) {
+                wm.getDefaultDisplay().getRealMetrics(dm);
+                RootWheel.setScreenSize(dm.widthPixels, dm.heightPixels);
+            }
+        } catch (Exception ignored) {
+        }
         Log.i(TAG, lastState);
     }
 
@@ -332,10 +342,7 @@ float d = counter - lastCounter;
         int mode = Cfg.mode(this);
         long dur = Math.max(40, Math.min(600, Cfg.gestureDurationMs(this)));
 
-// ===== Root 滚轮模式 =====
-        // 用 root 执行 input roll，发出真正的滚轮事件；列表自带惯性，观感最接近鼠标。
-        // 每次要起进程，所以 100ms 才发一次，累积的量一次发完。
-        if (mode == Cfg.MODE_ROOT_WHEEL) {
+if (mode == Cfg.MODE_ROOT_WHEEL) {
             float acc = wheelAccum;
             float unit = Math.max(10f, Cfg.wheelUnit(this));
             if (Math.abs(acc) < unit) {
@@ -345,11 +352,11 @@ float d = counter - lastCounter;
                 return TICK_ACTIVE_MS;
             }
 
-            int steps = (int) (acc / unit);
-            if (steps == 0) {
-                steps = acc > 0 ? 1 : -1;
+            int units = (int) (acc / unit);
+            if (units == 0) {
+                units = acc > 0 ? 1 : -1;
             }
-            wheelAccum = acc - steps * unit;
+            wheelAccum = acc - units * unit;
             float cap = unit * 4f;
             if (wheelAccum > cap) {
                 wheelAccum = cap;
@@ -357,12 +364,13 @@ float d = counter - lastCounter;
                 wheelAccum = -cap;
             }
 
+            int steps = units * 3;
             boolean ok = RootWheel.roll(steps);
             if (ok) {
                 lastRootWheelMs = now;
                 lastEmitMs = now;
             } else {
-                wheelAccum += steps * unit;
+                wheelAccum += units * unit;
             }
             return TICK_ACTIVE_MS;
         }

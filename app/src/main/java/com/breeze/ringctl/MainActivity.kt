@@ -358,7 +358,7 @@ Divider(color = CBorder.copy(alpha = 0.3f))
                         fontSize = 11.sp,
                         color = CMutedFg,
                         modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)
-                    }
+                    )
                 } else {
                     SliderRow(
                         icon = Icons.Filled.Straighten,

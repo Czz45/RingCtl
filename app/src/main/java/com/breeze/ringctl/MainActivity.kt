@@ -538,7 +538,7 @@ Divider(color = CBorder.copy(alpha = 0.3f))
                     Text(it, color = CMutedFg, fontSize = 13.sp, lineHeight = 19.sp)
                 }
             }
-Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(16.dp))
 
             // ---------- 关于入口 ----------
             SettingsCard {
@@ -550,6 +550,7 @@ Spacer(Modifier.height(16.dp))
                 )
             }
         }
+}
 }
 
 // ==================== 组件 ====================

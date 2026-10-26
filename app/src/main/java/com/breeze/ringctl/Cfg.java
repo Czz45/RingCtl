@@ -133,6 +133,19 @@ public class Cfg {
         sp(c).edit().putInt("max_swipe_px", v).apply();
     }
 
+    /**
+     * 平滑窗口（毫秒）。
+     * 转动产生的位移先累积这么久，再一次性平滑滑出去，
+     * 避免每次转动都单独发一个小手势导致一顿一顿。
+     * 0 = 不平滑，立即响应。
+     */
+    public static int smoothWindowMs(Context c) {
+        return sp(c).getInt("smooth_window_ms", 80);
+    }
+
+    public static void setSmoothWindowMs(Context c, int v) {
+        sp(c).edit().putInt("smooth_window_ms", v).apply();
+    }
     // ==================== 高级 ====================
 
     /** 松手后多久内继续响应（毫秒），0 = 立即停止 */

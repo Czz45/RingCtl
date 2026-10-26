@@ -318,12 +318,24 @@ public class RingForegroundService extends Service implements SensorEventListene
             return TICK_ACTIVE_MS;
         }
 
-        if (mode == Cfg.MODE_SMOOTH) {
+if (mode == Cfg.MODE_SMOOTH) {
             float p = pendingPx;
             float minEmit = 90f;
             if (Math.abs(p) < minEmit) {
                 return idle ? TICK_IDLE_MS : TICK_ACTIVE_MS;
             }
+
+            // 平滑窗口：如果最近还在转动，先等一会儿把位移攒起来，
+            // 再一次性平滑滑出去，避免每次小转动单发一个手势。
+            int win = Cfg.smoothWindowMs(this);
+            if (win > 0) {
+                long sinceData = nowReal - lastDataMs;
+                if (sinceData < win) {
+                    // 还在窗口内，继续攒
+                    return TICK_ACTIVE_MS;
+                }
+            }
+
             float take = p;
             float maxPer = Cfg.maxSwipePx(this);
             if (take > maxPer) {
@@ -334,8 +346,15 @@ public class RingForegroundService extends Service implements SensorEventListene
             pendingPx = p - take;
             dbgPending = pendingPx;
 
+            // 位移越大，手势时长相应拉长，滑动更平滑
+            long slideDur = dur;
+            float absTake = Math.abs(take);
+            if (absTake > 120f) {
+                slideDur = Math.min(400L, (long) (dur * (absTake / 120f)));
+            }
+
             inflight.incrementAndGet();
-            boolean ok = svc.swipe(take, dur, axis(), () -> inflight.decrementAndGet());
+            boolean ok = svc.swipe(take, slideDur, axis(), () -> inflight.decrementAndGet());
             if (!ok) {
                 inflight.decrementAndGet();
                 pendingPx += take;
@@ -345,7 +364,6 @@ public class RingForegroundService extends Service implements SensorEventListene
             }
             return TICK_ACTIVE_MS;
         }
-
         float unit = Math.max(10f, Cfg.wheelUnit(this));
         float acc = wheelAccum;
         if (Math.abs(acc) < unit) {

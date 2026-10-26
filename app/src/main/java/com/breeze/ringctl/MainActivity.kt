@@ -94,6 +94,7 @@ fun RingCtlScreen(activity: ComponentActivity) {
     var mode by remember { mutableIntStateOf(Cfg.mode(ctx)) }
     var axis by remember { mutableIntStateOf(Cfg.axis(ctx)) }
     var sens by remember { mutableFloatStateOf(Cfg.sens(ctx)) }
+    var smoothWin by remember { mutableIntStateOf(Cfg.smoothWindowMs(ctx)) }
     var unit by remember { mutableFloatStateOf(Cfg.wheelUnit(ctx)) }
     var step by remember { mutableIntStateOf(Cfg.stepPx(ctx)) }
     var dead by remember { mutableFloatStateOf(Cfg.deadzone(ctx)) }
@@ -340,6 +341,24 @@ Divider(color = CBorder.copy(alpha = 0.3f))
                             Cfg.setSens(ctx, it)
                         }
                     )
+Divider(color = CBorder.copy(alpha = 0.3f))
+                    SliderRow(
+                        icon = Icons.Filled.Waves,
+                        title = "平滑窗口",
+                        valueText = if (smoothWin == 0) "关闭" else "$smoothWin 毫秒",
+                        value = smoothWin.toFloat(),
+                        range = 0f..300f,
+                        onChange = {
+                            smoothWin = ((it.toInt() / 10) * 10)
+                            Cfg.setSmoothWindowMs(ctx, smoothWin)
+                        }
+                    )
+                    Text(
+                        "转动时先攒一小段时间再一次性滑动，越大越平滑但越迟滞",
+                        fontSize = 11.sp,
+                        color = CMutedFg,
+                        modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)
+                    }
                 } else {
                     SliderRow(
                         icon = Icons.Filled.Straighten,

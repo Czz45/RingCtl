@@ -379,7 +379,7 @@ public class RingForegroundService extends Service implements SensorEventListene
                 return;
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator.vibrate(VibrationEffect.createOneShot(10, 120));
+                vibrator.vibrate(VibrationEffect.createOneShot(15, 180));
             } else {
                 vibrator.vibrate(10);
             }

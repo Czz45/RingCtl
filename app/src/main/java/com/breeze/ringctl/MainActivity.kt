@@ -549,97 +549,9 @@ private fun RootCard(
             }
         }
     }
-@Composable
-private fun RootCard(
-    accReady: Boolean,
-    onEnable: () -> Unit,
-    onDisable: () -> Unit,
-    busy: Boolean
-) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = CCard),
-        shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    Icons.Filled.Lock,
-                    contentDescription = null,
-                    tint = CAccent,
-                    modifier = Modifier.size(20.dp)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    "Root 模式",
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = CForeground
-                )
-                Spacer(Modifier.weight(1f))
-                Box(
-                    Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(if (accReady) CAccent.copy(alpha = 0.15f) else CMuted)
-                        .padding(horizontal = 8.dp, vertical = 3.dp)
-                ) {
-                    Text(
-                        if (accReady) "已开启" else "未开启",
-                        fontSize = 11.sp,
-                        color = if (accReady) CAccent else CMutedFg
-                    )
-                }
-            }
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "检测到 root 权限，可免去手动跳转系统设置",
-                fontSize = 12.sp,
-                color = CMutedFg
-            )
-
-            Spacer(Modifier.height(14.dp))
-
-            if (busy) {
-                Row(
-                    Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        strokeWidth = 2.dp,
-                        color = CAccent
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Text("正在应用…", fontSize = 14.sp, color = CMutedFg)
-                }
-            } else {
-                Button(
-                    onClick = { if (accReady) onDisable() else onEnable() },
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (accReady) CMuted else CAccent,
-                        contentColor = if (accReady) CForeground else COnAccent
-                    ),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Icon(
-                        if (accReady) Icons.Filled.Close else Icons.Filled.Check,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        if (accReady) "关闭无障碍服务" else "一键开启无障碍服务",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-            }
-        }
-    }
 }
-}@Composable
+
+@Composable
 private fun SetupCard(
     accReady: Boolean,
     batteryOk: Boolean,

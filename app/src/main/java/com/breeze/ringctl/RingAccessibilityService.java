@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.GestureDescription;
 import android.content.Context;
 import android.graphics.Path;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.DisplayMetrics;
@@ -12,8 +13,7 @@ import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 
 /**
- * 无障碍服务：执行滑动 / 翻页动作。
- * 支持竖直、水平两个方向，所有手势方法带 onFinish 回调用于背压。
+ * 无障碍服务：执行滑动 / 翻页 / 连续拖拽动作。
  */
 public class RingAccessibilityService extends AccessibilityService {
 
@@ -24,6 +24,9 @@ public class RingAccessibilityService extends AccessibilityService {
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private volatile boolean gestureBusy = false;
+
+    /** 连续拖拽会话（表冠连续模式用） */
+    private DragSession dragSession;
 
     public static boolean isReady() {
         return instance != null;
@@ -49,17 +52,66 @@ public class RingAccessibilityService extends AccessibilityService {
 
     @Override
     public boolean onUnbind(android.content.Intent intent) {
+        releaseDrag();
         instance = null;
         return super.onUnbind(intent);
     }
 
     @Override
     public void onDestroy() {
+        releaseDrag();
         instance = null;
         super.onDestroy();
     }
 
-    // ==================== 对外入口 ====================
+    // ==================== 连续拖拽 ====================
+
+    /**
+     * 追加连续的拖拽位移。内部会维持一个「手指一直按着」的会话。
+     *
+     * @param delta 像素，正数 = 手指向正方向移动
+     */
+    public void dragFeed(float delta, boolean horizontal) {
+        if (delta == 0f && dragSession == null) {
+            return;
+        }
+        if (dragSession == null || !dragSession.isActive()) {
+            int[] size = screenSize();
+            if (size[0] <= 0 || size[1] <= 0) {
+                return;
+            }
+            dragSession = new DragSession(this, horizontal, size[0], size[1], () -> {
+                // 会话结束时清理引用
+            });
+            dragSession.start(delta);
+        } else {
+            dragSession.feed(delta);
+        }
+    }
+
+    /** 结束连续拖拽（手指抬起） */
+    public void dragStop() {
+        if (dragSession != null) {
+            dragSession.stop();
+            dragSession = null;
+        }
+    }
+
+    public boolean isDragging() {
+        return dragSession != null && dragSession.isActive();
+    }
+
+    private void releaseDrag() {
+        try {
+            if (dragSession != null) {
+                dragSession.stop();
+            }
+        } catch (Exception ignored) {
+        }
+        dragSession = null;
+    }
+
+    // ==================== 单次滑动 ====================
 
     public boolean swipe(float screenDelta, long duration, int dir, Runnable onFinish) {
         if (screenDelta == 0f) {
@@ -85,7 +137,6 @@ public class RingAccessibilityService extends AccessibilityService {
         float w = size[0];
         float h = size[1];
 
-        // 关键：位移太小会被识别成点击，强制最小滑动距离
         float minSlop = dpToPx(24f);
         if (Math.abs(screenDelta) < minSlop) {
             if (onFinish != null) {
@@ -98,7 +149,6 @@ public class RingAccessibilityService extends AccessibilityService {
 
         Path path = new Path();
         if (dir == DIR_HORIZONTAL) {
-            // 水平：正数 = 手指向左（内容左移 / 下一页），负数 = 向右
             float maxDx = w * 0.40f;
             float dx = Math.max(-maxDx, Math.min(maxDx, screenDelta));
 
@@ -128,7 +178,6 @@ public class RingAccessibilityService extends AccessibilityService {
             path.moveTo(startX, cy);
             path.lineTo(endX, cy);
         } else {
-            // 竖直：正数 = 手指向上（内容上滚）
             float maxDy = h * 0.45f;
             float dy = Math.max(-maxDy, Math.min(maxDy, screenDelta));
 
@@ -179,11 +228,6 @@ public class RingAccessibilityService extends AccessibilityService {
         return swipeHorizontal(screenDx, duration, null);
     }
 
-    /**
-     * 水平滑动。
-     *
-     * @param screenDx 正数 = 手指向左（内容左移 / 下一页）；负数 = 手指向右
-     */
     public boolean swipeHorizontal(float screenDx, long duration, Runnable onFinish) {
         return swipe(screenDx, duration, DIR_HORIZONTAL, onFinish);
     }
@@ -192,9 +236,6 @@ public class RingAccessibilityService extends AccessibilityService {
         return pageScroll(backward, null);
     }
 
-    /**
-     * 翻页：优先用可滚动节点的 ACTION_SCROLL，失败则退回大距离滑动。
-     */
     public boolean pageScroll(boolean backward, Runnable onFinish) {
         try {
             AccessibilityNodeInfo root = getRootInActiveWindow();
@@ -225,17 +266,14 @@ public class RingAccessibilityService extends AccessibilityService {
         return swipeVertical(backward ? -dy : dy, 220, onFinish);
     }
 
-    /** 全局返回 */
     public boolean goBack() {
         return performGlobalAction(GLOBAL_ACTION_BACK);
     }
 
-    /** 全局主页 */
     public boolean goHome() {
         return performGlobalAction(GLOBAL_ACTION_HOME);
     }
 
-    /** 深度优先找可滚动节点，限制深度和广度防卡死 */
     private AccessibilityNodeInfo findScrollable(AccessibilityNodeInfo node, int depth) {
         if (node == null || depth > 12) {
             return null;

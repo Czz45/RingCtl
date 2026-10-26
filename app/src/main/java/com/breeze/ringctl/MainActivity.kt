@@ -285,6 +285,16 @@ fun RingCtlScreen(activity: ComponentActivity) {
                     mode = Cfg.MODE_PAGE
                     Cfg.setMode(ctx, mode)
                 }
+Divider(color = CBorder.copy(alpha = 0.3f))
+                ModeRow(
+                    Icons.Filled.TouchApp,
+                    "连续拖拽",
+                    "手指按住不松，页面连续跟随，观感最接近原生滚动",
+                    mode == Cfg.MODE_DRAG
+                ) {
+                    mode = Cfg.MODE_DRAG
+                    Cfg.setMode(ctx, mode)
+                }
             }
 
             // ---------- 滑动方向 ----------
@@ -318,7 +328,7 @@ fun RingCtlScreen(activity: ComponentActivity) {
             // ---------- 参数 ----------
             SectionLabel("参数调节")
             SettingsCard {
-                if (mode == Cfg.MODE_SMOOTH) {
+                if (mode == Cfg.MODE_SMOOTH || mode == Cfg.MODE_DRAG) {
                     SliderRow(
                         icon = Icons.Filled.Speed,
                         title = "灵敏度",

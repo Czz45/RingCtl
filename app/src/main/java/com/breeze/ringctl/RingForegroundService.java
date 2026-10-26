@@ -93,6 +93,13 @@ public class RingForegroundService extends Service implements SensorEventListene
     public void onDestroy() {
         running = false;
         try {
+            RingAccessibilityService s = RingAccessibilityService.get();
+            if (s != null) {
+                s.dragStop();
+            }
+        } catch (Exception ignored) {
+        }
+        try {
             if (handler != null) {
                 handler.removeCallbacksAndMessages(null);
             }
@@ -209,7 +216,7 @@ public class RingForegroundService extends Service implements SensorEventListene
         float signedD = reverse ? -d : d;
 
         int mode = Cfg.mode(this);
-        if (mode == Cfg.MODE_SMOOTH) {
+        if (mode == Cfg.MODE_SMOOTH || mode == Cfg.MODE_DRAG) {
             float px = signedD * Cfg.sens(this) * 0.5f;
             float np = pendingPx + px;
             float totalCap = Cfg.maxSwipePx(this) * 4f;
@@ -294,6 +301,22 @@ public class RingForegroundService extends Service implements SensorEventListene
 
         int mode = Cfg.mode(this);
         long dur = Math.max(40, Math.min(600, Cfg.gestureDurationMs(this)));
+
+// ===== 连续拖拽模式 =====
+        // 手指保持按下，位移持续喂进去，页面连续跟随；停止转动后自动抬手
+        if (mode == Cfg.MODE_DRAG) {
+            boolean horizontal = (Cfg.axis(this) == Cfg.AXIS_HORIZONTAL);
+            float p = pendingPx;
+
+            // 有位移就喂，没位移就让 DragSession 自己超时抬手
+            if (Math.abs(p) >= 1f) {
+                pendingPx = 0f;
+                dbgPending = 0f;
+                svc.dragFeed(p, horizontal);
+                lastEmitMs = now;
+            }
+            return TICK_ACTIVE_MS;
+        }
 
         if (mode == Cfg.MODE_SMOOTH) {
             float p = pendingPx;

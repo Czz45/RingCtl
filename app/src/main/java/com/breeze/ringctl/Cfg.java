@@ -13,6 +13,8 @@ public class Cfg {
     public static final int MODE_SMOOTH = 0;
     public static final int MODE_WHEEL = 1;
     public static final int MODE_PAGE = 2;
+    /** 连续拖拽：手指按住不放，页面连续跟随 */
+    public static final int MODE_DRAG = 3;
 
     public static final int AXIS_VERTICAL = 0;
     public static final int AXIS_HORIZONTAL = 1;

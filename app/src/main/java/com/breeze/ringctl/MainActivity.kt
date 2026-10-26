@@ -30,6 +30,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 // ---------- 设计系统色板（来自 ui-ux-pro-max: Dark Mode OLED） ----------
 private val CPrimary = ComposeColor(0xFF1E293B)
@@ -80,6 +82,8 @@ fun RingCtlScreen(activity: ComponentActivity) {
     var accReady by remember { mutableStateOf(false) }
     var serviceRunning by remember { mutableStateOf(false) }
     var batteryOk by remember { mutableStateOf(true) }
+    var hasRoot by remember { mutableStateOf(false) }
+    var accBusy by remember { mutableStateOf(false) }
     var notified by remember { mutableStateOf(false) }
 
     var enabled by remember { mutableStateOf(Cfg.enabled(ctx)) }
@@ -98,6 +102,11 @@ fun RingCtlScreen(activity: ComponentActivity) {
     var pausedLeft by remember { mutableIntStateOf(0) }
 
     // 轮询状态
+    // 只检测一次 root（结果内部缓存）
+    LaunchedEffect(Unit) {
+        hasRoot = withContext(Dispatchers.IO) { RootHelper.hasRoot() }
+    }
+
     LaunchedEffect(Unit) {
         while (true) {
             accReady = RingAccessibilityService.isReady()
@@ -139,6 +148,31 @@ fun RingCtlScreen(activity: ComponentActivity) {
             )
 
             Spacer(Modifier.height(20.dp))
+
+// ---------- Root 模式 ----------
+            if (hasRoot) {
+                RootCard(
+                    accReady = accReady,
+                    onEnable = {
+                        accBusy = true
+                        Thread {
+                            RootHelper.forceRebindAccessibility(ctx)
+                            Thread.sleep(800)
+                            accBusy = false
+                        }.start()
+                    },
+                    onDisable = {
+                        accBusy = true
+                        Thread {
+                            RootHelper.disableAccessibility(ctx)
+                            Thread.sleep(500)
+                            accBusy = false
+                        }.start()
+                    },
+                    busy = accBusy
+                )
+                Spacer(Modifier.height(16.dp))
+            }
 
             // ---------- 设置向导 ----------
             if (needsSetup) {
@@ -427,6 +461,185 @@ fun RingCtlScreen(activity: ComponentActivity) {
 // ==================== 组件 ====================
 
 @Composable
+private fun RootCard(
+    accReady: Boolean,
+    onEnable: () -> Unit,
+    onDisable: () -> Unit,
+    busy: Boolean
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = CCard),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Filled.Lock,
+                    contentDescription = null,
+                    tint = CAccent,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Root 模式",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = CForeground
+                )
+                Spacer(Modifier.weight(1f))
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (accReady) CAccent.copy(alpha = 0.15f) else CMuted)
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                ) {
+                    Text(
+                        if (accReady) "已开启" else "未开启",
+                        fontSize = 11.sp,
+                        color = if (accReady) CAccent else CMutedFg
+                    )
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "检测到 root 权限，可免去手动跳转系统设置",
+                fontSize = 12.sp,
+                color = CMutedFg
+            )
+
+            Spacer(Modifier.height(14.dp))
+
+            if (busy) {
+                Row(
+                    Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = CAccent
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text("正在应用…", fontSize = 14.sp, color = CMutedFg)
+                }
+            } else {
+                Button(
+                    onClick = { if (accReady) onDisable() else onEnable() },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (accReady) CMuted else CAccent,
+                        contentColor = if (accReady) CForeground else COnAccent
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(
+                        if (accReady) Icons.Filled.Close else Icons.Filled.Check,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        if (accReady) "关闭无障碍服务" else "一键开启无障碍服务",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        }
+    }
+@Composable
+private fun RootCard(
+    accReady: Boolean,
+    onEnable: () -> Unit,
+    onDisable: () -> Unit,
+    busy: Boolean
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = CCard),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Filled.Lock,
+                    contentDescription = null,
+                    tint = CAccent,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Root 模式",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = CForeground
+                )
+                Spacer(Modifier.weight(1f))
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (accReady) CAccent.copy(alpha = 0.15f) else CMuted)
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                ) {
+                    Text(
+                        if (accReady) "已开启" else "未开启",
+                        fontSize = 11.sp,
+                        color = if (accReady) CAccent else CMutedFg
+                    )
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "检测到 root 权限，可免去手动跳转系统设置",
+                fontSize = 12.sp,
+                color = CMutedFg
+            )
+
+            Spacer(Modifier.height(14.dp))
+
+            if (busy) {
+                Row(
+                    Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = CAccent
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text("正在应用…", fontSize = 14.sp, color = CMutedFg)
+                }
+            } else {
+                Button(
+                    onClick = { if (accReady) onDisable() else onEnable() },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (accReady) CMuted else CAccent,
+                        contentColor = if (accReady) CForeground else COnAccent
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(
+                        if (accReady) Icons.Filled.Close else Icons.Filled.Check,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        if (accReady) "关闭无障碍服务" else "一键开启无障碍服务",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        }
+    }
+}
+}@Composable
 private fun SetupCard(
     accReady: Boolean,
     batteryOk: Boolean,

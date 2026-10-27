@@ -66,6 +66,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 打开 App 即启动前台服务，让通知常驻
+        try {
+            RingForegroundService.start(this)
+        } catch (e: Exception) {
+        }
+
         setContent {
             MaterialTheme(colorScheme = AppColors) {
                 Surface(color = CBackground, modifier = Modifier.fillMaxSize()) {

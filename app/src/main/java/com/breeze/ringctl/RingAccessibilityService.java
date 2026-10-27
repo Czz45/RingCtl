@@ -4,7 +4,6 @@ import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.GestureDescription;
 import android.content.Context;
 import android.graphics.Path;
-import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.DisplayMetrics;
@@ -13,7 +12,7 @@ import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 
 /**
- * 无障碍服务：执行滑动 / 翻页 / 连续拖拽动作。
+ * 无障碍服务：执行滑动 / 翻页 / 连续拖拽，同时监听前台应用变化。
  */
 public class RingAccessibilityService extends AccessibilityService {
 
@@ -25,8 +24,10 @@ public class RingAccessibilityService extends AccessibilityService {
     private final Handler ui = new Handler(Looper.getMainLooper());
     private volatile boolean gestureBusy = false;
 
-    /** 连续拖拽会话（表冠连续模式用） */
     private DragSession dragSession;
+
+    /** 当前前台包名，供按应用配置判断 */
+    public static volatile String foregroundPkg = "";
 
     public static boolean isReady() {
         return instance != null;
@@ -40,10 +41,30 @@ public class RingAccessibilityService extends AccessibilityService {
     protected void onServiceConnected() {
         super.onServiceConnected();
         instance = this;
+        try {
+            android.accessibilityservice.AccessibilityServiceInfo info = getServiceInfo();
+            if (info != null) {
+                info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                        | AccessibilityEvent.TYPE_WINDOWS_CHANGED;
+                setServiceInfo(info);
+            }
+        } catch (Exception ignored) {
+        }
     }
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
+        if (event == null || event.getPackageName() == null) {
+            return;
+        }
+        int type = event.getEventType();
+        if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                || type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+            String pkg = event.getPackageName().toString();
+            if (pkg != null && !pkg.isEmpty()) {
+                foregroundPkg = pkg;
+            }
+        }
     }
 
     @Override
@@ -54,6 +75,7 @@ public class RingAccessibilityService extends AccessibilityService {
     public boolean onUnbind(android.content.Intent intent) {
         releaseDrag();
         instance = null;
+        foregroundPkg = "";
         return super.onUnbind(intent);
     }
 
@@ -61,16 +83,12 @@ public class RingAccessibilityService extends AccessibilityService {
     public void onDestroy() {
         releaseDrag();
         instance = null;
+        foregroundPkg = "";
         super.onDestroy();
     }
 
     // ==================== 连续拖拽 ====================
 
-    /**
-     * 追加连续的拖拽位移。内部会维持一个「手指一直按着」的会话。
-     *
-     * @param delta 像素，正数 = 手指向正方向移动
-     */
     public void dragFeed(float delta, boolean horizontal) {
         if (delta == 0f && dragSession == null) {
             return;
@@ -81,7 +99,6 @@ public class RingAccessibilityService extends AccessibilityService {
                 return;
             }
             dragSession = new DragSession(this, horizontal, size[0], size[1], () -> {
-                // 会话结束时清理引用
             });
             dragSession.start(delta);
         } else {
@@ -89,7 +106,6 @@ public class RingAccessibilityService extends AccessibilityService {
         }
     }
 
-    /** 结束连续拖拽（手指抬起） */
     public void dragStop() {
         if (dragSession != null) {
             dragSession.stop();

@@ -11,8 +11,11 @@ import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -66,29 +69,32 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // 打开 App 即启动前台服务，让通知常驻
-        try {
-            RingForegroundService.start(this)
-        } catch (e: Exception) {
-        }
 
         setContent {
             MaterialTheme(colorScheme = AppColors) {
                 Surface(color = CBackground, modifier = Modifier.fillMaxSize()) {
-                    var showAbout by remember { mutableStateOf(false) }
-                    if (showAbout) {
-                        AboutScreen(this) { showAbout = false }
-                    } else {
-                        RingCtlScreen(this) { showAbout = true }
+                    // 0 = 主界面，1 = 关于，2 = 按应用设置
+                    var page by remember { mutableIntStateOf(0) }
+                    when (page) {
+                        1 -> AboutScreen(this) { page = 0 }
+                        2 -> AppSettingsScreen(this) { page = 0 }
+                        else -> RingCtlScreen(
+                            this,
+                            onShowAbout = { page = 1 },
+                            onShowAppSettings = { page = 2 }
+                        )
                     }
                 }
             }
         }
     }
 }
-
 @Composable
-fun RingCtlScreen(activity: ComponentActivity, onShowAbout: () -> Unit = {}) {
+fun RingCtlScreen(
+    activity: ComponentActivity,
+    onShowAbout: () -> Unit = {},
+    onShowAppSettings: () -> Unit = {}
+) {
     val ctx = activity
 
     var accReady by remember { mutableStateOf(false) }
@@ -184,6 +190,17 @@ fun RingCtlScreen(activity: ComponentActivity, onShowAbout: () -> Unit = {}) {
                         "把物理变焦环当作通用旋钮",
                         fontSize = 14.sp,
                         color = CMutedFg
+                    )
+                }
+                IconButton(
+                    onClick = onShowAppSettings,
+                    modifier = Modifier.size(44.dp)
+                ) {
+                    Icon(
+                        Icons.Filled.Apps,
+                        contentDescription = "按应用设置",
+                        tint = CMutedFg,
+                        modifier = Modifier.size(24.dp)
                     )
                 }
                 IconButton(
@@ -1326,4 +1343,214 @@ fun AboutScreen(activity: ComponentActivity, onBack: () -> Unit) {
             Spacer(Modifier.height(32.dp))
         }
     }
+}
+@Composable
+fun AppSettingsScreen(activity: ComponentActivity, onBack: () -> Unit) {
+    val ctx = activity
+    var apps by remember { mutableStateOf<List<AppList.Item>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    var keyword by remember { mutableStateOf("") }
+    var showSystem by remember { mutableStateOf(false) }
+    var refreshKey by remember { mutableIntStateOf(0) }
+
+    BackHandler(enabled = true) { onBack() }
+
+    LaunchedEffect(showSystem, refreshKey) {
+        loading = true
+        apps = withContext(Dispatchers.IO) { AppList.load(ctx, showSystem) }
+        loading = false
+    }
+
+    val enabledSet = remember(refreshKey) { AppCfg.enabledPkgs(ctx) }
+    val disabledSet = remember(refreshKey) { AppCfg.disabledPkgs(ctx) }
+
+    val filtered = remember(apps, keyword) {
+        if (keyword.isBlank()) apps
+        else apps.filter {
+            it.label.contains(keyword, true) || it.pkg.contains(keyword, true)
+        }
+    }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .windowInsetsPadding(WindowInsets.systemBars)
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 56.dp)
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.Filled.ArrowBack, contentDescription = "返回", tint = CForeground)
+            }
+            Text("按应用设置", fontSize = 19.sp, fontWeight = FontWeight.Medium, color = CForeground)
+        }
+
+        OutlinedTextField(
+            value = keyword,
+            onValueChange = { keyword = it },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            placeholder = { Text("搜索应用", color = CMutedFg, fontSize = 14.sp) },
+            leadingIcon = {
+                Icon(Icons.Filled.Search, contentDescription = null, tint = CMutedFg)
+            },
+            singleLine = true,
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = CAccent,
+                unfocusedBorderColor = CBorder,
+                focusedTextColor = CForeground,
+                unfocusedTextColor = CForeground,
+                cursorColor = CAccent
+            ),
+            shape = RoundedCornerShape(12.dp)
+        )
+
+        Spacer(Modifier.height(8.dp))
+
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable { showSystem = !showSystem }
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("显示系统应用", fontSize = 13.sp, color = CMutedFg, modifier = Modifier.weight(1f))
+            Switch(
+                checked = showSystem,
+                onCheckedChange = { showSystem = it },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = COnAccent,
+                    checkedTrackColor = CAccent
+                )
+            )
+        }
+
+        Text(
+            "未单独设置的 App 跟随「启用控制」全局开关",
+            fontSize = 11.sp,
+            color = CMutedFg,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+        )
+
+        Spacer(Modifier.height(4.dp))
+
+        if (loading) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = CAccent, modifier = Modifier.size(28.dp))
+            }
+        } else {
+            LazyColumn(Modifier.fillMaxSize()) {
+                items(filtered.size) { idx ->
+                    val app = filtered[idx]
+                    val st = when {
+                        enabledSet.contains(app.pkg) -> 1
+                        disabledSet.contains(app.pkg) -> -1
+                        else -> 0
+                    }
+                    AppRow(
+                        app = app,
+                        state = st,
+                        onToggle = { on ->
+                            AppCfg.setAppState(ctx, app.pkg, if (on) 1 else -1)
+                            refreshKey++
+                        }
+                    )
+                    Divider(color = CBorder.copy(alpha = 0.2f))
+                }
+                item { Spacer(Modifier.height(24.dp)) }
+            }
+        }
+    }
+}
+@Composable
+private fun AppRow(
+    app: AppList.Item,
+    state: Int,
+    onToggle: (Boolean) -> Unit
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 60.dp)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(CMuted),
+            contentAlignment = Alignment.Center
+        ) {
+            if (app.icon != null) {
+                androidx.compose.foundation.Image(
+                    bitmap = drawableToBitmap(app.icon).asImageBitmap(),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                )
+            } else {
+                Text(
+                    app.label.take(1),
+                    fontSize = 18.sp,
+                    color = CAccent,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        Spacer(Modifier.width(12.dp))
+
+        Column(Modifier.weight(1f)) {
+            Text(
+                app.label,
+                fontSize = 15.sp,
+                color = CForeground,
+                maxLines = 1
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                when (state) {
+                    1 -> "已启用"
+                    -1 -> "已禁用"
+                    else -> "跟随全局"
+                },
+                fontSize = 11.sp,
+                color = when (state) {
+                    1 -> CAccent
+                    -1 -> CDestructive
+                    else -> CMutedFg
+                }
+            )
+        }
+
+        Spacer(Modifier.width(8.dp))
+
+        Switch(
+            checked = state != -1,
+            onCheckedChange = onToggle,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = COnAccent,
+                checkedTrackColor = CAccent,
+                uncheckedThumbColor = CMutedFg,
+                uncheckedTrackColor = CMuted
+            )
+        )
+    }
+}
+/** Drawable 转 Bitmap，用于显示应用图标 */
+private fun drawableToBitmap(d: android.graphics.drawable.Drawable): android.graphics.Bitmap {
+    val w = if (d.intrinsicWidth > 0) d.intrinsicWidth else 48
+    val h = if (d.intrinsicHeight > 0) d.intrinsicHeight else 48
+    val bmp = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+    val canvas = android.graphics.Canvas(bmp)
+    d.setBounds(0, 0, w, h)
+    d.draw(canvas)
+    return bmp
 }

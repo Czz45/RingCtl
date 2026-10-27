@@ -256,6 +256,19 @@ private Notification buildNotification() {
         Log.i(TAG, lastState);
     }
 
+    /**
+     * 当前前台 App 是否应该响应变焦环。
+     * 优先级：单 App 配置 > 全局开关
+     */
+    private boolean isActiveForCurrentApp() {
+        String pkg = RingAccessibilityService.foregroundPkg;
+        // 自己这个 App 不响应，避免自己转自己
+        if (pkg != null && pkg.equals(getPackageName())) {
+            return false;
+        }
+        return AppCfg.shouldWork(this, Cfg.enabled(this), pkg);
+    }
+
     private int axis() {
         return Cfg.axis(this) == Cfg.AXIS_HORIZONTAL
                 ? RingAccessibilityService.DIR_HORIZONTAL
@@ -264,7 +277,7 @@ private Notification buildNotification() {
 
     @Override
     public void onSensorChanged(SensorEvent e) {
-        if (!running || !Cfg.enabled(this)) {
+        if (!running || !isActiveForCurrentApp()) {
             return;
         }
         if (SystemClock.elapsedRealtime() < cooldownUntilMs) {

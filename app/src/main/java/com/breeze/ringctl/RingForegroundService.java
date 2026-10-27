@@ -32,6 +32,10 @@ public class RingForegroundService extends Service implements SensorEventListene
     private static final String TAG = "RingCtl";
     private static final String CHANNEL_ID = "ring_ctl";
     private static final int NOTI_ID = 1001;
+    /** 通知栏：切换滑动方向 */
+    public static final String ACTION_TOGGLE_AXIS = "com.breeze.ringctl.TOGGLE_AXIS";
+    /** 通知栏：启用/停用 */
+    public static final String ACTION_TOGGLE_ENABLED = "com.breeze.ringctl.TOGGLE_ENABLED";
 
     public static final int TYPE_OPTICAL_TRACKING = 33171136;
 
@@ -85,9 +89,38 @@ public class RingForegroundService extends Service implements SensorEventListene
         scheduleTick(0);
     }
 
-    @Override
+@Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        if (intent != null) {
+            String action = intent.getAction();
+            if (ACTION_TOGGLE_AXIS.equals(action)) {
+                int cur = Cfg.axis(this);
+                int next = (cur == Cfg.AXIS_VERTICAL)
+                        ? Cfg.AXIS_HORIZONTAL
+                        : Cfg.AXIS_VERTICAL;
+                Cfg.setAxis(this, next);
+                refreshNotification();
+                return START_STICKY;
+            }
+            if (ACTION_TOGGLE_ENABLED.equals(action)) {
+                Cfg.setEnabled(this, !Cfg.enabled(this));
+                refreshNotification();
+                return START_STICKY;
+            }
+        }
         return START_STICKY;
+    }
+
+    /** 刷新常驻通知（更新按钮文字与状态） */
+    private void refreshNotification() {
+        try {
+            NotificationManager nm = (NotificationManager)
+                    getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm != null) {
+                nm.notify(NOTI_ID, buildNotification());
+            }
+        } catch (Exception ignored) {
+        }
     }
 
     @Override
@@ -133,9 +166,23 @@ public class RingForegroundService extends Service implements SensorEventListene
         }
     }
 
-    private Notification buildNotification() {
+private Notification buildNotification() {
         PendingIntent pi = PendingIntent.getActivity(
                 this, 0, new Intent(this, MainActivity.class),
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+        boolean vertical = (Cfg.axis(this) == Cfg.AXIS_VERTICAL);
+
+        Intent toggleIntent = new Intent(this, RingForegroundService.class);
+        toggleIntent.setAction(ACTION_TOGGLE_AXIS);
+        PendingIntent togglePi = PendingIntent.getService(
+                this, 100, toggleIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+        Intent enableIntent = new Intent(this, RingForegroundService.class);
+        enableIntent.setAction(ACTION_TOGGLE_ENABLED);
+        PendingIntent enablePi = PendingIntent.getService(
+                this, 101, enableIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
         Notification.Builder b;
@@ -144,14 +191,29 @@ public class RingForegroundService extends Service implements SensorEventListene
         } else {
             b = new Notification.Builder(this);
         }
-        return b.setContentTitle("变焦环控制运行中")
-                .setContentText("转动环即可滚动")
+
+        String axisText = vertical ? "竖直滑动 上下" : "水平滑动 左右";
+        String stateText = Cfg.enabled(this) ? axisText : "已停用";
+
+        b.setContentTitle("变焦环控制")
+                .setContentText(stateText)
                 .setSmallIcon(android.R.drawable.ic_menu_compass)
                 .setContentIntent(pi)
                 .setOngoing(true)
-                .build();
-    }
+                .setShowWhen(false);
 
+        b.addAction(new Notification.Action.Builder(
+                null,
+                vertical ? "切到左右" : "切到上下",
+                togglePi).build());
+
+        b.addAction(new Notification.Action.Builder(
+                null,
+                Cfg.enabled(this) ? "停用" : "启用",
+                enablePi).build());
+
+        return b.build();
+    }
     private void registerSensor() {
         if (sm == null) {
             lastState = "SensorManager 不可用";

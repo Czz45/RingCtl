@@ -73,13 +73,14 @@ public class RingForegroundService extends Service implements SensorEventListene
     private Vibrator vibrator;
     private final AtomicInteger inflight = new AtomicInteger(0);
     private final AtomicBoolean tickScheduled = new AtomicBoolean(false);
+    private Thread keepAliveThread;
 
     @Override
     public void onCreate() {
         super.onCreate();
         createChannel();
         sm = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
-        startForeground(NOTI_ID, buildNotification());
+        startForegroundCompat();
 
         emitThread = new HandlerThread("ring-emit");
         emitThread.start();
@@ -88,6 +89,7 @@ public class RingForegroundService extends Service implements SensorEventListene
         registerSensor();
         running = true;
         scheduleTick(0);
+        startKeepAlive();
     }
 
 @Override
@@ -112,14 +114,37 @@ public class RingForegroundService extends Service implements SensorEventListene
         return START_STICKY;
     }
 
-    /** 刷新常驻通知（更新按钮文字与状态） */
+    /**
+     * 启动前台服务。
+     * Android 14+ 必须显式声明类型，否则系统可能直接终止。
+     */
+    private void startForegroundCompat() {
+        Notification n = buildNotification();
+        try {
+            if (Build.VERSION.SDK_INT >= 34) {
+                startForeground(NOTI_ID, n,
+                        android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+            } else {
+                startForeground(NOTI_ID, n);
+            }
+        } catch (Exception e) {
+            try {
+                startForeground(NOTI_ID, n);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    /**
+     * 刷新常驻通知。
+     *
+     * 关键：用 startForeground 而不是 notify()。
+     * 小米等 ROM 移掉通知后，单纯 notify 不会恢复前台身份，
+     * 会导致服务被视为「没有前台通知」而被清理。
+     */
     private void refreshNotification() {
         try {
-            NotificationManager nm = (NotificationManager)
-                    getSystemService(Context.NOTIFICATION_SERVICE);
-            if (nm != null) {
-                nm.notify(NOTI_ID, buildNotification());
-            }
+            startForegroundCompat();
         } catch (Exception ignored) {
         }
     }
@@ -132,13 +157,6 @@ public class RingForegroundService extends Service implements SensorEventListene
     @Override
     public void onDestroy() {
         running = false;
-        try {
-            RingAccessibilityService s = RingAccessibilityService.get();
-            if (s != null) {
-                s.dragStop();
-            }
-        } catch (Exception ignored) {
-        }
         try {
             if (handler != null) {
                 handler.removeCallbacksAndMessages(null);
@@ -167,6 +185,37 @@ public class RingForegroundService extends Service implements SensorEventListene
         }
     }
 
+/**
+     * 诊断用：当前前台 App + 是否生效。
+     */
+    private String buildAppLine() {
+        String pkg = ForegroundApp.get(this);
+        if (pkg == null || pkg.length() == 0) {
+            return "当前：未识别到应用";
+        }
+        String label;
+        try {
+            android.content.pm.PackageManager pm = getPackageManager();
+            label = pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString();
+        } catch (Exception e) {
+            label = pkg;
+        }
+        int st = AppCfg.getAppState(this, pkg);
+        boolean active = isActiveForCurrentApp();
+        String tag;
+        if (active) {
+            tag = "生效";
+        } else if (st == -1) {
+            tag = "不生效(单独禁用)";
+        } else if (st == 0) {
+            tag = "不生效(跟随全局=关)";
+        } else {
+            tag = "不生效";
+        }
+        return "当前：" + label + " · " + tag;
+    }
+
+    
 private Notification buildNotification() {
         PendingIntent pi = PendingIntent.getActivity(
                 this, 0, new Intent(this, MainActivity.class),
@@ -194,6 +243,9 @@ private Notification buildNotification() {
                 enabled ? (vertical ? "上下" : "左右") : "已停用");
         rv.setTextColor(R.id.notif_state,
                 enabled ? 0xFF22C55E : 0xFF94A3B8);
+
+        // 诊断：显示当前识别到的前台 App 与判断结果
+        rv.setTextViewText(R.id.notif_app, buildAppLine());
         rv.setOnClickPendingIntent(R.id.btn_axis, togglePi);
         rv.setOnClickPendingIntent(R.id.btn_toggle, enablePi);
 
@@ -204,7 +256,7 @@ private Notification buildNotification() {
             b = new Notification.Builder(this);
         }
 
-        b.setSmallIcon(android.R.drawable.ic_menu_compass)
+        b.setSmallIcon(R.drawable.ic_notif)
                 .setContentIntent(pi)
                 .setOngoing(true)
                 .setShowWhen(false)
@@ -249,7 +301,6 @@ private Notification buildNotification() {
             android.view.WindowManager wm = (android.view.WindowManager) getSystemService(Context.WINDOW_SERVICE);
             if (wm != null) {
                 wm.getDefaultDisplay().getRealMetrics(dm);
-                RootWheel.setScreenSize(dm.widthPixels, dm.heightPixels);
             }
         } catch (Exception ignored) {
         }
@@ -258,10 +309,18 @@ private Notification buildNotification() {
 
     /**
      * 当前前台 App 是否应该响应变焦环。
-     * 优先级：单 App 配置 > 全局开关
+     *
+     * 三层优先级：
+     *   1. 启用服务（running，外部已判断）
+     *   2. 单 App 独立开关：打开即生效（强例外），关闭即不生效
+     *   3. 未单独设置的 App，跟随全局开关
      */
     private boolean isActiveForCurrentApp() {
-        String pkg = RingAccessibilityService.foregroundPkg;
+        // 优先 UsageStats（不受输入法/悬浮窗干扰），失败退回无障碍
+        String pkg = ForegroundApp.get(this);
+        if (ForegroundApp.isIgnorable(pkg)) {
+            return false;
+        }
         // 自己这个 App 不响应，避免自己转自己
         if (pkg != null && pkg.equals(getPackageName())) {
             return false;
@@ -269,14 +328,81 @@ private Notification buildNotification() {
         return AppCfg.shouldWork(this, Cfg.enabled(this), pkg);
     }
 
+    // ==================== 按 App 覆盖的参数 ====================
+
+    /** 当前前台包名，可能为 null */
+    private String fgPkg() {
+        String p = ForegroundApp.get(this);
+        if (ForegroundApp.isIgnorable(p)) {
+            return RingAccessibilityService.foregroundPkg;
+        }
+        return p;
+    }
+
+    private int pMode() {
+        return AppCfg.intOf(this, fgPkg(), "mode", Cfg.mode(this));
+    }
+
+    private int pAxis() {
+        return AppCfg.intOf(this, fgPkg(), "axis", Cfg.axis(this));
+    }
+
+    private float pSens() {
+        return AppCfg.floatOf(this, fgPkg(), "sens", Cfg.sens(this));
+    }
+
+    private float pUnit() {
+        return AppCfg.floatOf(this, fgPkg(), "unit", Cfg.wheelUnit(this));
+    }
+
+    private int pStep() {
+        return AppCfg.intOf(this, fgPkg(), "step", Cfg.stepPx(this));
+    }
+
+    private int pFixedSide() {
+        return AppCfg.intOf(this, fgPkg(), "fixed_side", Cfg.fixedDirSide(this));
+    }
+
+    private boolean pFixedDir() {
+        return AppCfg.boolOf(this, fgPkg(), "fixed", Cfg.fixedDir(this));
+    }
+
+    private float pDead() {
+        return AppCfg.floatOf(this, fgPkg(), "dead", Cfg.deadzone(this));
+    }
+
     private int axis() {
-        return Cfg.axis(this) == Cfg.AXIS_HORIZONTAL
+        return pAxis() == Cfg.AXIS_HORIZONTAL
                 ? RingAccessibilityService.DIR_HORIZONTAL
                 : RingAccessibilityService.DIR_VERTICAL;
     }
 
+    private long lastDiagMs = 0L;
+
     @Override
     public void onSensorChanged(SensorEvent e) {
+        // 诊断：每 2 秒打一次判断链路，定位「显示生效但不动」的原因
+        long nowDiag = SystemClock.elapsedRealtime();
+        if (nowDiag - lastDiagMs > 2000L) {
+            lastDiagMs = nowDiag;
+            try {
+                String dp = ForegroundApp.get(this);
+                boolean ign = ForegroundApp.isIgnorable(dp);
+                int dst = AppCfg.getAppState(this, dp);
+                boolean gEn = Cfg.enabled(this);
+                boolean res = isActiveForCurrentApp();
+                Log.i(TAG, "DIAG pkg=" + dp
+                        + " ignorable=" + ign
+                        + " appState=" + dst
+                        + " globalEnabled=" + gEn
+                        + " active=" + res
+                        + " hasPerm=" + ForegroundApp.hasUsagePermission(this)
+                        + " running=" + running);
+            } catch (Exception ex) {
+                Log.i(TAG, "DIAG error " + ex);
+            }
+        }
+
         if (!running || !isActiveForCurrentApp()) {
             return;
         }
@@ -297,20 +423,34 @@ private Notification buildNotification() {
 float d = counter - lastCounter;
         lastCounter = counter;
 
-        if (Math.abs(d) < Cfg.deadzone(this)) {
+        if (Math.abs(d) < pDead()) {
             return;
         }
 
         // ===== 方向防抖 =====
-        // 来回转时单帧差值可能因噪声/惯性残留翻号，导致反向误触发。
-        // 规则：连续 N 帧方向一致才认，否则丢弃这一帧。
+        // 目的：滤掉单帧噪声（幅度很小的翻号），但反转方向时要立刻响应，
+        // 并且必须清掉反方向遗留的累积值，否则会出现「往回转还先按原方向走一下」。
         int curDir = d > 0 ? 1 : -1;
-        if (curDir == lastDir) {
-            dirConfirm++;
-        } else {
-            dirConfirm = 1;
+        if (curDir != lastDir) {
+            // 方向真的变了：丢掉上一方向没发完的累积
+            if (lastDir != 0) {
+                pendingPx = 0f;
+                wheelAccum = 0f;
+            }
             lastDir = curDir;
+            dirConfirm = 1;
+            // 只有幅度够大才认为是真的反向，否则当噪声忽略
+            if (Math.abs(d) < pDead() * 3f) {
+                return;
+            }
+            // 确认是真实反向，直接放行，不等下一帧
+            dirConfirm = DIR_CONFIRM_FRAMES;
+            Log.i(TAG, "DIR 反向 cur=" + curDir + " d=" + d
+                    + " pendingPx已清零 wheelAccum已清零");
+        } else {
+            dirConfirm++;
         }
+
         if (dirConfirm < DIR_CONFIRM_FRAMES) {
             return;
         }
@@ -321,31 +461,16 @@ float d = counter - lastCounter;
         boolean reverse = Cfg.reverse(this);
         float signedD = reverse ? -d : d;
 
-        int mode = Cfg.mode(this);
-        if (mode == Cfg.MODE_ROOT_WHEEL) {
+        // 固定方向：不管正转反转，只按选定的方向输出
+        if (pFixedDir()) {
+            float mag = Math.abs(d);
+            signedD = (pFixedSide() == Cfg.FIXED_NEGATIVE) ? -mag : mag;
+        }
+
+        {
+            int mode0 = pMode();
             float na = wheelAccum + signedD;
-            float unit = Math.max(10f, Cfg.wheelUnit(this));
-            float limit = unit * 4f;
-            if (na > limit) {
-                na = limit;
-            } else if (na < -limit) {
-                na = -limit;
-            }
-            wheelAccum = na;
-        } else if (mode == Cfg.MODE_SMOOTH || mode == Cfg.MODE_DRAG) {
-            float px = signedD * Cfg.sens(this) * 0.5f;
-            float np = pendingPx + px;
-            float totalCap = Cfg.maxSwipePx(this) * 4f;
-            if (np > totalCap) {
-                np = totalCap;
-            } else if (np < -totalCap) {
-                np = -totalCap;
-            }
-            pendingPx = np;
-            dbgPending = np;
-        } else {
-            float na = wheelAccum + signedD;
-            float unit = Math.max(10f, Cfg.wheelUnit(this));
+            float unit = Math.max(10f, pUnit());
             float limit = unit * 6f;
             if (na > limit) {
                 na = limit;
@@ -358,6 +483,40 @@ float d = counter - lastCounter;
 
     @Override
     public void onAccuracyChanged(Sensor sensor, int accuracy) {
+    }
+
+    /**
+     * 保活循环。
+     *
+     * 小米等 ROM 会在切后台时移除前台通知，进而判定服务非法。
+     * 每秒调一次 startForeground，确保前台身份与通知始终存在，
+     * 同时让通知里的「当前应用」保持最新。
+     */
+    private void startKeepAlive() {
+        if (keepAliveThread != null) {
+            return;
+        }
+        keepAliveThread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                while (running) {
+                    try {
+                        Thread.sleep(1000L);
+                    } catch (InterruptedException e) {
+                        return;
+                    }
+                    if (!running) {
+                        return;
+                    }
+                    try {
+                        startForegroundCompat();
+                    } catch (Exception ignored) {
+                    }
+                }
+            }
+        }, "ring-keepalive");
+        keepAliveThread.setDaemon(true);
+        keepAliveThread.start();
     }
 
     private void scheduleTick(long delayMs) {
@@ -387,7 +546,9 @@ float d = counter - lastCounter;
 
         boolean paused = Cfg.isPaused(this);
         dbgPaused = paused;
-        if (paused || !Cfg.enabled(this)) {
+        // 只判断暂停。全局开关是否生效交给 isActiveForCurrentApp() 统一裁决，
+        // 否则单 App 单独启用的例外会被这里的全局开关直接否掉。
+        if (paused) {
             pendingPx = 0f;
             wheelAccum = 0f;
             return TICK_IDLE_MS;
@@ -405,6 +566,8 @@ float d = counter - lastCounter;
             return TICK_IDLE_MS;
         }
 
+        int mode = pMode();
+
         long now = System.currentTimeMillis();
         long minInterval = Math.max(30, Cfg.minIntervalMs(this));
         if (now - lastEmitMs < minInterval) {
@@ -415,56 +578,7 @@ float d = counter - lastCounter;
             return TICK_ACTIVE_MS;
         }
 
-        int mode = Cfg.mode(this);
         long dur = Math.max(40, Math.min(600, Cfg.gestureDurationMs(this)));
-
-if (mode == Cfg.MODE_ROOT_WHEEL) {
-            float acc = wheelAccum;
-            float unit = Math.max(10f, Cfg.wheelUnit(this));
-            if (Math.abs(acc) < unit) {
-                return idle ? TICK_IDLE_MS : TICK_ACTIVE_MS;
-            }
-            if (now - lastRootWheelMs < 100L) {
-                return TICK_ACTIVE_MS;
-            }
-
-            int units = (int) (acc / unit);
-            if (units == 0) {
-                units = acc > 0 ? 1 : -1;
-            }
-            wheelAccum = acc - units * unit;
-            float cap = unit * 4f;
-            if (wheelAccum > cap) {
-                wheelAccum = cap;
-            } else if (wheelAccum < -cap) {
-                wheelAccum = -cap;
-            }
-
-            int steps = units * 3;
-            boolean ok = RootWheel.roll(steps);
-            if (ok) {
-                lastRootWheelMs = now;
-                lastEmitMs = now;
-            } else {
-                wheelAccum += units * unit;
-            }
-            return TICK_ACTIVE_MS;
-        }
-// ===== 连续拖拽模式 =====
-        // 手指保持按下，位移持续喂进去，页面连续跟随；停止转动后自动抬手
-        if (mode == Cfg.MODE_DRAG) {
-            boolean horizontal = (Cfg.axis(this) == Cfg.AXIS_HORIZONTAL);
-            float p = pendingPx;
-
-            // 有位移就喂，没位移就让 DragSession 自己超时抬手
-            if (Math.abs(p) >= 1f) {
-                pendingPx = 0f;
-                dbgPending = 0f;
-                svc.dragFeed(p, horizontal);
-                lastEmitMs = now;
-            }
-            return TICK_ACTIVE_MS;
-        }
 
 if (mode == Cfg.MODE_SMOOTH) {
             float p = pendingPx;
@@ -512,7 +626,7 @@ if (mode == Cfg.MODE_SMOOTH) {
             }
             return TICK_ACTIVE_MS;
         }
-        float unit = Math.max(10f, Cfg.wheelUnit(this));
+        float unit = Math.max(10f, pUnit());
         float acc = wheelAccum;
         if (Math.abs(acc) < unit) {
             return idle ? TICK_IDLE_MS : TICK_ACTIVE_MS;
@@ -520,15 +634,10 @@ if (mode == Cfg.MODE_SMOOTH) {
         boolean up = acc > 0;
         wheelAccum = up ? (acc - unit) : (acc + unit);
 
-        int px = Math.max(90, Cfg.stepPx(this));
+        int px = Math.max(90, pStep());
 
         inflight.incrementAndGet();
-        boolean ok;
-        if (mode == Cfg.MODE_WHEEL) {
-            ok = svc.swipe(up ? px : -px, dur, axis(), () -> inflight.decrementAndGet());
-        } else {
-            ok = svc.pageScroll(!up, () -> inflight.decrementAndGet());
-        }
+        boolean ok = svc.swipe(up ? px : -px, dur, axis(), () -> inflight.decrementAndGet());
         if (!ok) {
             inflight.decrementAndGet();
             wheelAccum += up ? unit : -unit;

@@ -18,7 +18,7 @@
             android:id="@+id/notif_icon"
             android:layout_width="18dp"
             android:layout_height="18dp"
-            android:src="@android:drawable/ic_menu_compass"
+            android:src="@drawable/ic_notif"
             android:contentDescription="@null" />
 
         <TextView
@@ -40,6 +40,15 @@
             android:textColor="#22C55E"
             android:textSize="12sp" />
     </LinearLayout>
+
+    <TextView
+        android:id="@+id/notif_app"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="当前：--"
+        android:textColor="#94A3B8"
+        android:textSize="11sp" />
 
     <LinearLayout
         android:layout_width="match_parent"

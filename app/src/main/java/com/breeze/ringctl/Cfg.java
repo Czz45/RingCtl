@@ -18,6 +18,14 @@ public class Cfg {
     /** Root 滚轮：用 root 发真实滚轮事件，需要 root */
     public static final int MODE_ROOT_WHEEL = 4;
 
+    /** 分段滑动：原来的表冠/滚轮/翻页三种合并后的统一模式 */
+    public static final int MODE_SEGMENT = 5;
+
+    /** 固定方向：固定往「正」方向（顺时针贡献正向） */
+    public static final int FIXED_POSITIVE = 0;
+    /** 固定方向：固定往「反」方向 */
+    public static final int FIXED_NEGATIVE = 1;
+
     public static final int AXIS_VERTICAL = 0;
     public static final int AXIS_HORIZONTAL = 1;
 
@@ -26,6 +34,15 @@ public class Cfg {
     }
 
     // ==================== 基本 ====================
+    /** 是否启用「按应用独立设置」。关闭时所有 App 统一跟随全局。 */
+    public static boolean perAppEnabled(Context c) {
+        return sp(c).getBoolean("per_app_enabled", true);
+    }
+
+    public static void setPerAppEnabled(Context c, boolean v) {
+        sp(c).edit().putBoolean("per_app_enabled", v).apply();
+    }
+
 
     public static boolean enabled(Context c) {
         return sp(c).getBoolean("enabled", true);
@@ -43,12 +60,106 @@ public class Cfg {
         sp(c).edit().putBoolean("reverse", v).apply();
     }
 
+    /** 固定方向：不管正转反转，都只往一个方向滚 */
+    public static boolean fixedDir(Context c) {
+        return sp(c).getBoolean("fixed_dir", false);
+    }
+
+    public static void setFixedDir(Context c, boolean v) {
+        sp(c).edit().putBoolean("fixed_dir", v).apply();
+    }
+    /** 固定方向时，固定往哪个方向：0=正向，1=反向 */
+    public static int fixedDirSide(Context c) {
+        return sp(c).getInt("fixed_side", FIXED_POSITIVE);
+    }
+
+    public static void setFixedDirSide(Context c, int v) {
+        sp(c).edit().putInt("fixed_side", v).apply();
+    }
+
+    /**
+     * 连续拖拽：滑动保持时间（毫秒）。
+     *
+     * 这个时间内只要还有转动，就一直保持「手指按下」的滑动状态；
+     * 超过这个时间没有任何转动，才抬手结束滑动。
+     */
+    public static int dragHoldMs(Context c) {
+        return sp(c).getInt("drag_hold_ms", 800);
+    }
+
+    public static void setDragHoldMs(Context c, int v) {
+        sp(c).edit().putInt("drag_hold_ms", v).apply();
+    }
+
+    /** 连续拖拽：每段手势时长（毫秒），越短衔接越密 */
+    public static int dragSegMs(Context c) {
+        return sp(c).getInt("drag_seg_ms", 40);
+    }
+
+    public static void setDragSegMs(Context c, int v) {
+        sp(c).edit().putInt("drag_seg_ms", v).apply();
+    }
+
     public static int mode(Context c) {
-        return sp(c).getInt("mode", MODE_SMOOTH);
+        int v = sp(c).getInt("mode", MODE_SEGMENT);
+        // 兼容旧版：表冠/滚轮/翻页统一归为分段滑动
+        // 表冠/滚轮/翻页/连续拖拽 已合并为分段滑动
+        if (v == MODE_SMOOTH || v == MODE_WHEEL || v == MODE_PAGE || v == MODE_DRAG) {
+            return MODE_SEGMENT;
+        }
+        // MODE_ROOT_WHEEL 保留，单独可用
+        return v;
     }
 
     public static void setMode(Context c, int v) {
         sp(c).edit().putInt("mode", v).apply();
+    }
+
+    // ==================== Root 子方法开关 ====================
+
+    /** Root 方式一：input scroll（真滚轮事件，部分 App 不认） */
+    public static boolean rootScroll(Context c) {
+        return sp(c).getBoolean("root_scroll", true);
+    }
+
+    public static void setRootScroll(Context c, boolean v) {
+        sp(c).edit().putBoolean("root_scroll", v).apply();
+    }
+
+    /** Root 方式二：input swipe（真触摸滑动，兼容性最好） */
+    public static boolean rootSwipe(Context c) {
+        return sp(c).getBoolean("root_swipe", false);
+    }
+
+    public static void setRootSwipe(Context c, boolean v) {
+        sp(c).edit().putBoolean("root_swipe", v).apply();
+    }
+
+    /** Root 方式三：input roll（trackball，极少 App 认） */
+    public static boolean rootRoll(Context c) {
+        return sp(c).getBoolean("root_roll", false);
+    }
+
+    public static void setRootRoll(Context c, boolean v) {
+        sp(c).edit().putBoolean("root_roll", v).apply();
+    }
+
+    /** Root 方式四：sendevent 写鼠标设备（真 REL_WHEEL 事件） */
+    public static boolean rootMouse(Context c) {
+        return sp(c).getBoolean("root_mouse", false);
+    }
+
+    public static void setRootMouse(Context c, boolean v) {
+        sp(c).edit().putBoolean("root_mouse", v).apply();
+    }
+
+    /** Root 每档滑动像素 */
+    public static int rootStepPx(Context c) {
+        return sp(c).getInt("root_step_px", 260);
+    }
+
+    public static void setRootStepPx(Context c, int v) {
+        sp(c).edit().putInt("root_step_px", v).apply();
     }
 
     public static int axis(Context c) {

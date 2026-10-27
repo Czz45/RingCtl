@@ -82,6 +82,61 @@ public class RootWheel {
         }
     }
 
+    /**
+     * 方式二：input swipe —— 真触摸滑动。
+     * 所有 App 都认，因为它就是一根手指从 A 划到 B。
+     *
+     * @param dy 正数 = 往下滑（内容下移），负数 = 往上滑
+     */
+    public static boolean swipe(float dy) {
+        int v = (int) dy;
+        if (v == 0) {
+            return false;
+        }
+        if (v > 400) {
+            v = 400;
+        } else if (v < -400) {
+            v = -400;
+        }
+        int startY = screenY + v / 2;
+        int endY = screenY - v / 2;
+        // 限制在屏幕内
+        int minY = 120;
+        int maxY = screenY * 2 - 120;
+        if (startY < minY) {
+            startY = minY;
+            endY = startY - v;
+        }
+        if (endY < minY) {
+            endY = minY;
+        }
+        if (startY > maxY) {
+            startY = maxY;
+        }
+        if (endY > maxY) {
+            endY = maxY;
+        }
+        // 120ms 滑动，太快会被当成 fling
+        return exec("input swipe " + screenX + " " + startY
+                + " " + screenX + " " + endY + " 120");
+    }
+
+    /**
+     * 方式三：input roll —— trackball 相对位移，极少数 App 认。
+     */
+    public static boolean rollRaw(float dy) {
+        int v = (int) dy;
+        if (v == 0) {
+            return false;
+        }
+        if (v > 20) {
+            v = 20;
+        } else if (v < -20) {
+            v = -20;
+        }
+        return exec("input roll 0 " + v);
+    }
+
     /** 检测 input scroll 是否可用 */
     public static boolean isAvailable() {
         Process p = null;

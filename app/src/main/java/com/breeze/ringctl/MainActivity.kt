@@ -12,6 +12,7 @@ import android.view.accessibility.AccessibilityManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.LazyColumn
@@ -65,6 +66,8 @@ private val AppColors = darkColorScheme(
     error = CDestructive
 )
 
+// ==================== 主框架：底部导航 ====================
+
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -73,305 +76,522 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme(colorScheme = AppColors) {
                 Surface(color = CBackground, modifier = Modifier.fillMaxSize()) {
-                    // 0 = 主界面，1 = 关于，2 = 按应用设置
-                    var page by remember { mutableIntStateOf(0) }
-                    when (page) {
-                        1 -> AboutScreen(this) { page = 0 }
-                        2 -> AppSettingsScreen(this) { page = 0 }
-                        else -> RingCtlScreen(
-                            this,
-                            onShowAbout = { page = 1 },
-                            onShowAppSettings = { page = 2 }
-                        )
-                    }
+                    MainShell(this)
                 }
             }
         }
     }
 }
+
 @Composable
-fun RingCtlScreen(
-    activity: ComponentActivity,
-    onShowAbout: () -> Unit = {},
-    onShowAppSettings: () -> Unit = {}
-) {
-    val ctx = activity
+fun MainShell(activity: ComponentActivity) {
+    var tab by remember { mutableIntStateOf(0) }
+    var showAbout by remember { mutableStateOf(false) }
 
-    var accReady by remember { mutableStateOf(false) }
-    var serviceRunning by remember { mutableStateOf(false) }
-    var batteryOk by remember { mutableStateOf(true) }
-    var hasRoot by remember { mutableStateOf(false) }
-    var accBusy by remember { mutableStateOf(false) }
-    var notified by remember { mutableStateOf(false) }
-
-    var enabled by remember { mutableStateOf(Cfg.enabled(ctx)) }
-    var reverse by remember { mutableStateOf(Cfg.reverse(ctx)) }
-    var haptic by remember { mutableStateOf(Cfg.haptic(ctx)) }
-    var hapticAmp by remember { mutableIntStateOf(Cfg.hapticAmp(ctx)) }
-    var hapticMs by remember { mutableIntStateOf(Cfg.hapticMs(ctx)) }
-    var mode by remember { mutableIntStateOf(Cfg.mode(ctx)) }
-    var axis by remember { mutableIntStateOf(Cfg.axis(ctx)) }
-    var sens by remember { mutableFloatStateOf(Cfg.sens(ctx)) }
-    var smoothWin by remember { mutableIntStateOf(Cfg.smoothWindowMs(ctx)) }
-    var unit by remember { mutableFloatStateOf(Cfg.wheelUnit(ctx)) }
-    var step by remember { mutableIntStateOf(Cfg.stepPx(ctx)) }
-    var dead by remember { mutableFloatStateOf(Cfg.deadzone(ctx)) }
-    var cooldown by remember { mutableIntStateOf(Cfg.cooldownMs(ctx)) }
-    var minInt by remember { mutableIntStateOf(Cfg.minIntervalMs(ctx)) }
-    var gestDur by remember { mutableIntStateOf(Cfg.gestureDurationMs(ctx)) }
-    var maxSwipe by remember { mutableIntStateOf(Cfg.maxSwipePx(ctx)) }
-    var pausedLeft by remember { mutableIntStateOf(0) }
-    var versionName by remember { mutableStateOf(UpdateChecker.currentVersion(ctx)) }
-    var checking by remember { mutableStateOf(false) }
-    var updateInfo by remember { mutableStateOf<String?>(null) }
-    var updateUrl by remember { mutableStateOf(UpdateChecker.URL_RELEASES) }
-
-    // 轮询状态
-    // 只检测一次 root（结果内部缓存）
-    LaunchedEffect(Unit) {
-        hasRoot = withContext(Dispatchers.IO) { RootHelper.hasRoot() }
+    if (showAbout) {
+        AboutScreen(activity) { showAbout = false }
+        return
     }
 
-    // 启动时静默检查更新
+    val shared = RingStateHolder(activity)
+
+    // App 一打开就拉起前台服务，让通知立刻可用（可在这里直接启停）
     LaunchedEffect(Unit) {
-        UpdateChecker.check(ctx, object : UpdateChecker.Callback {
+        try {
+            if (!RingForegroundService.running) {
+                RingForegroundService.start(activity)
+            }
+        } catch (e: Exception) {
+        }
+    }
+
+    // HyperOS 在划掉任务时会清掉无障碍授权，这里用 root 自动恢复
+    LaunchedEffect(Unit) {
+        try {
+            val hasRoot = withContext(Dispatchers.IO) { RootHelper.hasRoot() }
+            if (hasRoot) {
+                // 稍等一下，让系统先把状态落定
+                delay(600)
+                if (!RingAccessibilityService.isReady()) {
+                    withContext(Dispatchers.IO) {
+                        RootHelper.forceRebindAccessibility(activity)
+                    }
+                    delay(400)
+                    // 第一次常常不成功，再试一次
+                    if (!RingAccessibilityService.isReady()) {
+                        withContext(Dispatchers.IO) {
+                            RootHelper.forceRebindAccessibility(activity)
+                        }
+                        delay(400)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+        }
+    }
+
+    // 启动时检查更新，有新版直接弹窗
+    var newVersion by remember { mutableStateOf<String?>(null) }
+    var newVersionUrl by remember { mutableStateOf(UpdateChecker.URL_RELEASES) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        UpdateChecker.check(activity, object : UpdateChecker.Callback {
             override fun onUpdate(latest: String, url: String, log: String) {
-                updateInfo = latest
-                updateUrl = url
+                newVersion = latest
+                newVersionUrl = url
+                showUpdateDialog = true
             }
 
             override fun onLatest(cur: String) {}
-
             override fun onFail(reason: String) {}
         })
     }
 
-    LaunchedEffect(Unit) {
-        while (true) {
-            accReady = RingAccessibilityService.isReady()
-            serviceRunning = RingForegroundService.running
-            batteryOk = isBatteryUnrestricted(ctx)
-            delay(500)
-        }
+    if (showUpdateDialog && newVersion != null) {
+        AlertDialog(
+            onDismissRequest = { showUpdateDialog = false },
+            containerColor = CCard,
+            titleContentColor = CForeground,
+            textContentColor = CMutedFg,
+            title = { Text("发现新版本", color = CForeground) },
+            text = {
+                Column {
+                    Text(
+                        "当前版本 ${UpdateChecker.currentVersion(activity)}",
+                        fontSize = 13.sp,
+                        color = CMutedFg
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "最新版本 $newVersion",
+                        fontSize = 15.sp,
+                        color = CAccent,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    UpdateChecker.openUrl(activity, newVersionUrl)
+                    showUpdateDialog = false
+                }) {
+                    Text("去更新", color = CAccent)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUpdateDialog = false }) {
+                    Text("忽略", color = CMutedFg)
+                }
+            }
+        )
     }
-
-    // 首次进入弹出引导
-    LaunchedEffect(Unit) {
-        if (!accReady) {
-            notified = true
-        }
-    }
-
-    val needsSetup = !accReady || !batteryOk
 
     Box(Modifier.fillMaxSize()) {
-        Column(
+        Box(
             Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
                 .windowInsetsPadding(WindowInsets.systemBars)
-                .padding(horizontal = 16.dp)
-                .padding(top = 16.dp, bottom = 24.dp)
         ) {
-// ---------- 标题栏 ----------
+            when (tab) {
+                0 -> ControlTab(activity, shared) { showAbout = true }
+                1 -> AppTabHost(activity, shared)
+                else -> SettingsTab(activity, shared) { showAbout = true }
+            }
+        }
+        // 底部导航
+        BottomBar(
+            current = tab,
+            onSelect = { tab = it },
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .windowInsetsPadding(WindowInsets.navigationBars)
+        )
+    }
+}
+
+@Composable
+private fun BottomBar(current: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .background(CCard)
+            .padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        data class TabItem(val icon: ImageVector, val label: String)
+        val items = listOf(
+            TabItem(Icons.Filled.Tune, "控制"),
+            TabItem(Icons.Filled.Apps, "应用"),
+            TabItem(Icons.Filled.Settings, "设置")
+        )
+        items.forEachIndexed { i, it ->
+            val sel = current == i
+            Column(
+                Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable { onSelect(i) }
+                    .padding(vertical = 6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Icon(
+                    it.icon,
+                    contentDescription = it.label,
+                    tint = if (sel) CAccent else CMutedFg,
+                    modifier = Modifier.size(23.dp)
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    it.label,
+                    fontSize = 11.sp,
+                    color = if (sel) CAccent else CMutedFg,
+                    fontWeight = if (sel) FontWeight.Medium else FontWeight.Normal
+                )
+            }
+        }
+    }
+}
+
+// ==================== 共享状态 ====================
+
+@Stable
+class RingStateHolder(val ctx: ComponentActivity) {
+    var accReady by mutableStateOf(false)
+    var serviceRunning by mutableStateOf(false)
+    var batteryOk by mutableStateOf(true)
+    var hasRoot by mutableStateOf(false)
+    var accBusy by mutableStateOf(false)
+
+    var enabled by mutableStateOf(Cfg.enabled(ctx))
+    var reverse by mutableStateOf(Cfg.reverse(ctx))
+    var fixedDir by mutableStateOf(Cfg.fixedDir(ctx))
+    var fixedSide by mutableIntStateOf(Cfg.fixedDirSide(ctx))
+    var dragHold by mutableIntStateOf(Cfg.dragHoldMs(ctx))
+    var dragSeg by mutableIntStateOf(Cfg.dragSegMs(ctx))
+    var rootScroll by mutableStateOf(Cfg.rootScroll(ctx))
+    var rootSwipe by mutableStateOf(Cfg.rootSwipe(ctx))
+    var rootRoll by mutableStateOf(Cfg.rootRoll(ctx))
+    var rootStep by mutableIntStateOf(Cfg.rootStepPx(ctx))
+    var rootMouse by mutableStateOf(Cfg.rootMouse(ctx))
+    var haptic by mutableStateOf(Cfg.haptic(ctx))
+    var hapticAmp by mutableIntStateOf(Cfg.hapticAmp(ctx))
+    var hapticMs by mutableIntStateOf(Cfg.hapticMs(ctx))
+    var mode by mutableIntStateOf(Cfg.mode(ctx))
+    var axis by mutableIntStateOf(Cfg.axis(ctx))
+    var sens by mutableFloatStateOf(Cfg.sens(ctx))
+    var smoothWin by mutableIntStateOf(Cfg.smoothWindowMs(ctx))
+    var unit by mutableFloatStateOf(Cfg.wheelUnit(ctx))
+    var step by mutableIntStateOf(Cfg.stepPx(ctx))
+    var dead by mutableFloatStateOf(Cfg.deadzone(ctx))
+    var cooldown by mutableIntStateOf(Cfg.cooldownMs(ctx))
+    var minInt by mutableIntStateOf(Cfg.minIntervalMs(ctx))
+    var gestDur by mutableIntStateOf(Cfg.gestureDurationMs(ctx))
+    var maxSwipe by mutableIntStateOf(Cfg.maxSwipePx(ctx))
+    var pausedLeft by mutableIntStateOf(0)
+
+    // 轮询服务与权限状态
+    @Composable
+    fun PollLifecycle() {
+        LaunchedEffect(Unit) {
+            hasRoot = withContext(Dispatchers.IO) { RootHelper.hasRoot() }
+        }
+        LaunchedEffect(Unit) {
+            while (true) {
+                accReady = RingAccessibilityService.isReady()
+                serviceRunning = RingForegroundService.running
+                batteryOk = isBatteryUnrestricted(ctx)
+                delay(500)
+            }
+        }
+    }
+}
+
+// ==================== Tab 1：控制 ====================
+
+@Composable
+fun ControlTab(activity: ComponentActivity, s: RingStateHolder, onShowAbout: () -> Unit) {
+    val ctx = activity
+    s.PollLifecycle()
+
+    val needsSetup = !s.accReady || !s.batteryOk
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp)
+            .padding(top = 16.dp, bottom = 96.dp)
+    ) {
+        // ---------- 标题栏 ----------
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "变焦环控制",
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = CForeground
+                )
+                Spacer(Modifier.height(4.dp))
+                Text("把物理变焦环当作通用旋钮", fontSize = 14.sp, color = CMutedFg)
+            }
+            IconButton(onClick = onShowAbout, modifier = Modifier.size(44.dp)) {
+                Icon(
+                    Icons.Filled.Info,
+                    contentDescription = "关于",
+                    tint = CMutedFg,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+        }
+        Spacer(Modifier.height(20.dp))
+
+        // ---------- Root 模式 ----------
+        if (s.hasRoot) {
+            RootCard(
+                accReady = s.accReady,
+                onEnable = {
+                    s.accBusy = true
+                    Thread {
+                        RootHelper.forceRebindAccessibility(ctx)
+                        Thread.sleep(800)
+                        s.accBusy = false
+                    }.start()
+                },
+                onDisable = {
+                    s.accBusy = true
+                    Thread {
+                        RootHelper.disableAccessibility(ctx)
+                        Thread.sleep(500)
+                        s.accBusy = false
+                    }.start()
+                },
+                busy = s.accBusy
+            )
+            Spacer(Modifier.height(16.dp))
+        }
+
+        // ---------- 设置向导 ----------
+        if (needsSetup) {
+            SetupCard(
+                accReady = s.accReady,
+                batteryOk = s.batteryOk,
+                onAccClick = { openAccessibility(ctx) },
+                onBatteryClick = { openBatterySettings(ctx) }
+            )
+            Spacer(Modifier.height(16.dp))
+        }
+
+        // ---------- 前台应用识别权限 ----------
+        var usageOk by remember { mutableStateOf(ForegroundApp.hasUsagePermission(ctx)) }
+        LaunchedEffect(Unit) {
+            while (true) {
+                usageOk = ForegroundApp.hasUsagePermission(ctx)
+                delay(1000)
+            }
+        }
+        if (!usageOk) {
+            SettingsCard {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("使用情况访问权限", fontSize = 15.sp, color = CForeground)
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            "用于准确识别当前是哪个 App，否则可能判断错应用",
+                            fontSize = 12.sp,
+                            color = CMutedFg
+                        )
+                    }
+                    SmallBtn("去授权") {
+                        try {
+                            ctx.startActivity(
+                                android.content.Intent(
+                                    android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS
+                                )
+                            )
+                        } catch (e: Exception) {
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+        }
+
+        // ---------- 控制卡 ----------
+        StatusCard(
+            accReady = s.accReady,
+            serviceRunning = s.serviceRunning,
+            onToggleService = {
+                if (s.serviceRunning) {
+                    RingForegroundService.stop(ctx)
+                } else {
+                    RingForegroundService.start(ctx)
+                }
+            }
+        )
+        Spacer(Modifier.height(16.dp))
+
+        // ---------- 基本设置 ----------
+        SectionLabel("基本设置")
+        SettingsCard {
+            SwitchRow(
+                icon = Icons.Filled.PowerSettingsNew,
+                title = "全局开关",
+                subtitle = "关闭后所有未单独设置的 App 都不响应",
+                checked = s.enabled
+            ) {
+                s.enabled = it
+                Cfg.setEnabled(ctx, it)
+            }
+            Divider(color = CBorder.copy(alpha = 0.3f))
+            SwitchRow(
+                icon = Icons.Filled.SwapVert,
+                title = "反转方向",
+                subtitle = "滚动方向与预期相反时打开",
+                checked = s.reverse
+            ) {
+                s.reverse = it
+                Cfg.setReverse(ctx, it)
+            }
+            Divider(color = CBorder.copy(alpha = 0.3f))
+            SwitchRow(
+                icon = Icons.Filled.SwapHoriz,
+                title = "固定方向",
+                subtitle = "不管往前还是往后转，都只往一个方向滚动",
+                checked = s.fixedDir
+            ) {
+                s.fixedDir = it
+                Cfg.setFixedDir(ctx, it)
+            }
+            // 固定方向打开后，才显示固定往哪边
+            if (s.fixedDir) {
+                Divider(color = CBorder.copy(alpha = 0.3f))
+                ModeRow(
+                    Icons.Filled.ArrowUpward,
+                    "固定往正方向",
+                    "正转反转都按正方向滚",
+                    s.fixedSide == Cfg.FIXED_POSITIVE
+                ) {
+                    s.fixedSide = Cfg.FIXED_POSITIVE
+                    Cfg.setFixedDirSide(ctx, s.fixedSide)
+                }
+                Divider(color = CBorder.copy(alpha = 0.3f))
+                ModeRow(
+                    Icons.Filled.ArrowDownward,
+                    "固定往反方向",
+                    "正转反转都按反方向滚，适合和上面的感觉相反时",
+                    s.fixedSide == Cfg.FIXED_NEGATIVE
+                ) {
+                    s.fixedSide = Cfg.FIXED_NEGATIVE
+                    Cfg.setFixedDirSide(ctx, s.fixedSide)
+                }
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+
+        // ---------- 快捷暂停 ----------
+        SectionLabel("快捷暂停")
+        SettingsCard {
             Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.Top
+                Modifier.fillMaxWidth().padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(Modifier.weight(1f)) {
+                    Text("暂停响应", fontSize = 15.sp, color = CForeground)
+                    Spacer(Modifier.height(3.dp))
                     Text(
-                        "变焦环控制",
-                        fontSize = 26.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = CForeground
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "把物理变焦环当作通用旋钮",
-                        fontSize = 14.sp,
+                        if (s.pausedLeft > 0) "剩余 ${s.pausedLeft} 秒" else "暂停期间转环不会有反应",
+                        fontSize = 12.sp,
                         color = CMutedFg
                     )
                 }
-                IconButton(
-                    onClick = onShowAppSettings,
-                    modifier = Modifier.size(44.dp)
-                ) {
-                    Icon(
-                        Icons.Filled.Apps,
-                        contentDescription = "按应用设置",
-                        tint = CMutedFg,
-                        modifier = Modifier.size(24.dp)
-                    )
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                SmallBtn("暂停 1 分钟") {
+                    Cfg.pauseFor(ctx, 1)
+                    s.pausedLeft = 60
                 }
-                IconButton(
-                    onClick = onShowAbout,
-                    modifier = Modifier.size(44.dp)
-                ) {
-                    Icon(
-                        Icons.Filled.Info,
-                        contentDescription = "关于",
-                        tint = CMutedFg,
-                        modifier = Modifier.size(24.dp)
-                    )
+                SmallBtn("暂停 10 分钟") {
+                    Cfg.pauseFor(ctx, 10)
+                    s.pausedLeft = 600
+                }
+                SmallBtn("恢复") {
+                    Cfg.resumeNow(ctx)
+                    s.pausedLeft = 0
                 }
             }
-            Spacer(Modifier.height(20.dp))
+        }
+        Spacer(Modifier.height(12.dp))
 
-// ---------- Root 模式 ----------
-            if (hasRoot) {
-                RootCard(
-                    accReady = accReady,
-                    onEnable = {
-                        accBusy = true
-                        Thread {
-                            RootHelper.forceRebindAccessibility(ctx)
-                            Thread.sleep(800)
-                            accBusy = false
-                        }.start()
-                    },
-                    onDisable = {
-                        accBusy = true
-                        Thread {
-                            RootHelper.disableAccessibility(ctx)
-                            Thread.sleep(500)
-                            accBusy = false
-                        }.start()
-                    },
-                    busy = accBusy
+        // 暂停倒计时
+        LaunchedEffect(s.pausedLeft) {
+            if (s.pausedLeft > 0) {
+                while (s.pausedLeft > 0) {
+                    delay(1000)
+                    s.pausedLeft -= 1
+                }
+            }
+        }
+    }
+}
+
+// ==================== Tab 3：设置 ====================
+
+@Composable
+fun SettingsTab(activity: ComponentActivity, s: RingStateHolder, onShowAbout: () -> Unit) {
+    val ctx = activity
+    s.PollLifecycle()
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp)
+            .padding(top = 20.dp, bottom = 96.dp)
+    ) {
+        // ---------- 标题栏 ----------
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "设置",
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = CForeground
                 )
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(4.dp))
+                Text("手感、节奏与反馈调节", fontSize = 14.sp, color = CMutedFg)
             }
-
-            // ---------- 设置向导 ----------
-            if (needsSetup) {
-                SetupCard(
-                    accReady = accReady,
-                    batteryOk = batteryOk,
-                    onAccClick = { openAccessibility(ctx) },
-                    onBatteryClick = { openBatterySettings(ctx) }
+            IconButton(onClick = onShowAbout, modifier = Modifier.size(44.dp)) {
+                Icon(
+                    Icons.Filled.Info,
+                    contentDescription = "关于",
+                    tint = CMutedFg,
+                    modifier = Modifier.size(24.dp)
                 )
-                Spacer(Modifier.height(16.dp))
             }
-
-            // ---------- 控制卡 ----------
-            StatusCard(
-                accReady = accReady,
-                serviceRunning = serviceRunning,
-                onToggleService = {
-                    if (serviceRunning) {
-                        RingForegroundService.stop(ctx)
-                    } else {
-                        RingForegroundService.start(ctx)
-                    }
-                }
-            )
-
-            Spacer(Modifier.height(16.dp))
-
-            // ---------- 基本设置 ----------
-            SectionLabel("基本设置")
-            SettingsCard {
-                SwitchRow(
-                    icon = Icons.Filled.PowerSettingsNew,
-                    title = "启用控制",
-                    subtitle = "关闭后转动环不会有任何反应",
-                    checked = enabled
-                ) {
-                    enabled = it
-                    Cfg.setEnabled(ctx, it)
-                }
-                Divider(color = CBorder.copy(alpha = 0.3f))
-                SwitchRow(
-                    icon = Icons.Filled.SwapVert,
-                    title = "反转方向",
-                    subtitle = "滚动方向与预期相反时打开",
-                    checked = reverse
-                ) {
-                    reverse = it
-                    Cfg.setReverse(ctx, it)
-                }
-            }
-            Spacer(Modifier.height(16.dp))
-
-            // ---------- 震动反馈 ----------
-            SectionLabel("震动反馈")
-            SettingsCard {
-                SwitchRow(
-                    icon = Icons.Filled.Vibration,
-                    title = "转动震动",
-                    subtitle = "每触发一次滑动震一下",
-                    checked = haptic
-                ) {
-                    haptic = it
-                    Cfg.setHaptic(ctx, it)
-                }
-                if (haptic) {
-                    Divider(color = CBorder.copy(alpha = 0.3f))
-                    SliderRow(
-                        icon = Icons.Filled.FitnessCenter,
-                        title = "震动强度",
-                        valueText = "$hapticAmp",
-                        value = hapticAmp.toFloat(),
-                        range = 10f..255f,
-                        onChange = {
-                            hapticAmp = it.toInt()
-                            Cfg.setHapticAmp(ctx, hapticAmp)
-                        }
-                    )
-                    Divider(color = CBorder.copy(alpha = 0.3f))
-                    SliderRow(
-                        icon = Icons.Filled.Timelapse,
-                        title = "震动时长",
-                        valueText = "$hapticMs 毫秒",
-                        value = hapticMs.toFloat(),
-                        range = 5f..100f,
-                        onChange = {
-                            hapticMs = it.toInt()
-                            Cfg.setHapticMs(ctx, hapticMs)
-                        }
-                    )
-                }
-            }
-            Spacer(Modifier.height(16.dp))
+        }
+        Spacer(Modifier.height(20.dp))
 
             // ---------- 模式 ----------
             SectionLabel("滚动模式")
             SettingsCard {
-                ModeRow(Icons.Filled.Tune, "表冠模式", "平滑跟随，转得快滚得远", mode == Cfg.MODE_SMOOTH) {
-                    mode = Cfg.MODE_SMOOTH
-                    Cfg.setMode(ctx, mode)
-                }
-                Divider(color = CBorder.copy(alpha = 0.3f))
-                ModeRow(Icons.Filled.Mouse, "滚轮模式", "一格一格，像鼠标滚轮", mode == Cfg.MODE_WHEEL) {
-                    mode = Cfg.MODE_WHEEL
-                    Cfg.setMode(ctx, mode)
-                }
-                Divider(color = CBorder.copy(alpha = 0.3f))
-                ModeRow(Icons.Filled.SwapHoriz, "翻页模式", "一次翻一屏", mode == Cfg.MODE_PAGE) {
-                    mode = Cfg.MODE_PAGE
-                    Cfg.setMode(ctx, mode)
-                }
-Divider(color = CBorder.copy(alpha = 0.3f))
                 ModeRow(
-                    Icons.Filled.TouchApp,
-                    "连续拖拽",
-                    "手指按住不松，页面连续跟随，观感最接近原生滚动",
-                    mode == Cfg.MODE_DRAG
+                    Icons.Filled.Mouse,
+                    "无障碍滑动",
+                    "用无障碍发触摸手势，兼容性最好但可能不够连续",
+                    s.mode == Cfg.MODE_SEGMENT
                 ) {
-                    mode = Cfg.MODE_DRAG
-                    Cfg.setMode(ctx, mode)
-                }
-if (hasRoot) {
-                    Divider(color = CBorder.copy(alpha = 0.3f))
-                    ModeRow(
-                        Icons.Filled.Mouse,
-                        "Root 滚轮",
-                        "用 root 发送真实滚轮事件，列表自带惯性，最接近鼠标手感",
-                        mode == Cfg.MODE_ROOT_WHEEL
-                    ) {
-                        mode = Cfg.MODE_ROOT_WHEEL
-                        Cfg.setMode(ctx, mode)
-                    }
+                    s.mode = Cfg.MODE_SEGMENT
+                    Cfg.setMode(ctx, s.mode)
                 }
             }
 
@@ -382,20 +602,20 @@ if (hasRoot) {
                     Icons.Filled.SwapVert,
                     "竖直滑动",
                     "上下滚动列表、刷信息流",
-                    axis == Cfg.AXIS_VERTICAL
+                    s.axis == Cfg.AXIS_VERTICAL
                 ) {
-                    axis = Cfg.AXIS_VERTICAL
-                    Cfg.setAxis(ctx, axis)
+                    s.axis = Cfg.AXIS_VERTICAL
+                    Cfg.setAxis(ctx, s.axis)
                 }
                 Divider(color = CBorder.copy(alpha = 0.3f))
                 ModeRow(
                     Icons.Filled.SwapHoriz,
                     "水平滑动",
                     "左右切换页面、翻卡片",
-                    axis == Cfg.AXIS_HORIZONTAL
+                    s.axis == Cfg.AXIS_HORIZONTAL
                 ) {
-                    axis = Cfg.AXIS_HORIZONTAL
-                    Cfg.setAxis(ctx, axis)
+                    s.axis = Cfg.AXIS_HORIZONTAL
+                    Cfg.setAxis(ctx, s.axis)
                 }
             }
 
@@ -403,18 +623,20 @@ if (hasRoot) {
 
             Spacer(Modifier.height(16.dp))
 
+        Spacer(Modifier.height(16.dp))
+
             // ---------- 参数 ----------
             SectionLabel("参数调节")
             SettingsCard {
-                if (mode == Cfg.MODE_SMOOTH || mode == Cfg.MODE_DRAG) {
+                if (s.mode == Cfg.MODE_DRAG) {
                     SliderRow(
                         icon = Icons.Filled.Speed,
                         title = "灵敏度",
-                        valueText = String.format("%.1f 倍", sens),
-                        value = sens,
+                        valueText = String.format("%.1f 倍", s.sens),
+                        value = s.sens,
                         range = 0.2f..5.0f,
                         onChange = {
-                            sens = it
+                            s.sens = it
                             Cfg.setSens(ctx, it)
                         }
                     )
@@ -422,12 +644,12 @@ Divider(color = CBorder.copy(alpha = 0.3f))
                     SliderRow(
                         icon = Icons.Filled.Waves,
                         title = "平滑窗口",
-                        valueText = if (smoothWin == 0) "关闭" else "$smoothWin 毫秒",
-                        value = smoothWin.toFloat(),
+                        valueText = if (s.smoothWin == 0) "关闭" else "${s.smoothWin} 毫秒",
+                        value = s.smoothWin.toFloat(),
                         range = 0f..300f,
                         onChange = {
-                            smoothWin = ((it.toInt() / 10) * 10)
-                            Cfg.setSmoothWindowMs(ctx, smoothWin)
+                            s.smoothWin = ((it.toInt() / 10) * 10)
+                            Cfg.setSmoothWindowMs(ctx, s.smoothWin)
                         }
                     )
                     Text(
@@ -436,15 +658,51 @@ Divider(color = CBorder.copy(alpha = 0.3f))
                         color = CMutedFg,
                         modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)
                     )
+                    Divider(color = CBorder.copy(alpha = 0.3f))
+                    SliderRow(
+                        icon = Icons.Filled.Timer,
+                        title = "保持按住",
+                        valueText = "${s.dragHold} 毫秒",
+                        value = s.dragHold.toFloat(),
+                        range = 120f..2000f,
+                        onChange = {
+                            s.dragHold = ((it.toInt() / 20) * 20)
+                            Cfg.setDragHoldMs(ctx, s.dragHold)
+                        }
+                    )
+                    Text(
+                        "停手后手指继续按这么久才抬起。这段时间内再转动会直接接着滑，不会重新起手",
+                        fontSize = 11.sp,
+                        color = CMutedFg,
+                        modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)
+                    )
+                    Divider(color = CBorder.copy(alpha = 0.3f))
+                    SliderRow(
+                        icon = Icons.Filled.Speed,
+                        title = "每段时长",
+                        valueText = "${s.dragSeg} 毫秒",
+                        value = s.dragSeg.toFloat(),
+                        range = 16f..120f,
+                        onChange = {
+                            s.dragSeg = ((it.toInt() / 4) * 4)
+                            Cfg.setDragSegMs(ctx, s.dragSeg)
+                        }
+                    )
+                    Text(
+                        "每一下滑动的持续时间。越小衔接越密越跟手，但太小会碎",
+                        fontSize = 11.sp,
+                        color = CMutedFg,
+                        modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)
+                    )
                 } else {
                     SliderRow(
                         icon = Icons.Filled.Straighten,
                         title = "一格触发阈值",
-                        valueText = String.format("%.0f", unit),
-                        value = unit,
+                        valueText = String.format("%.0f", s.unit),
+                        value = s.unit,
                         range = 20f..400f,
                         onChange = {
-                            unit = it
+                            s.unit = it
                             Cfg.setWheelUnit(ctx, it)
                         }
                     )
@@ -452,12 +710,12 @@ Divider(color = CBorder.copy(alpha = 0.3f))
                     SliderRow(
                         icon = Icons.Filled.SwapVert,
                         title = "每格滑动像素",
-                        valueText = "$step",
-                        value = step.toFloat(),
+                        valueText = "${s.step}",
+                        value = s.step.toFloat(),
                         range = 90f..580f,
                         onChange = {
-                            step = it.toInt()
-                            Cfg.setStepPx(ctx, step)
+                            s.step = it.toInt()
+                            Cfg.setStepPx(ctx, s.step)
                         }
                     )
                 }
@@ -465,11 +723,11 @@ Divider(color = CBorder.copy(alpha = 0.3f))
                 SliderRow(
                     icon = Icons.Filled.FilterAlt,
                     title = "死区",
-                    valueText = String.format("%.0f", dead),
-                    value = dead,
+                    valueText = String.format("%.0f", s.dead),
+                    value = s.dead,
                     range = 1f..115f,
                     onChange = {
-                        dead = it
+                        s.dead = it
                         Cfg.setDeadzone(ctx, it)
                     }
                 )
@@ -477,17 +735,18 @@ Divider(color = CBorder.copy(alpha = 0.3f))
 
             Spacer(Modifier.height(16.dp))
 
-            // ---------- 触发节奏 ----------
+        Spacer(Modifier.height(16.dp))
+
             SectionLabel("触发节奏")
             SettingsCard {
                 SliderRow(
                     icon = Icons.Filled.Timer,
                     title = "单次冷却",
-                    valueText = if (cooldown == 0) "关闭" else "$cooldown 毫秒",
-                    value = cooldown.toFloat(),
+                    valueText = if (s.cooldown == 0) "关闭" else "${s.cooldown} 毫秒",
+                    value = s.cooldown.toFloat(),
                     range = 0f..5000f,
                     onChange = {
-                        cooldown = (it.toInt() / 10) * 10
+                        s.cooldown = (it.toInt() / 10) * 10
                     }
                 )
                 Text(
@@ -500,24 +759,24 @@ Divider(color = CBorder.copy(alpha = 0.3f))
                 SliderRow(
                     icon = Icons.Filled.Schedule,
                     title = "最小间隔",
-                    valueText = "$minInt 毫秒",
-                    value = minInt.toFloat(),
+                    valueText = "${s.minInt} 毫秒",
+                    value = s.minInt.toFloat(),
                     range = 30f..500f,
                     onChange = {
-                        minInt = it.toInt()
-                        Cfg.setMinIntervalMs(ctx, minInt)
+                        s.minInt = it.toInt()
+                        Cfg.setMinIntervalMs(ctx, s.minInt)
                     }
                 )
                 Divider(color = CBorder.copy(alpha = 0.3f))
                 SliderRow(
                     icon = Icons.Filled.Timelapse,
                     title = "手势时长",
-                    valueText = "$gestDur 毫秒",
-                    value = gestDur.toFloat(),
+                    valueText = "${s.gestDur} 毫秒",
+                    value = s.gestDur.toFloat(),
                     range = 40f..400f,
                     onChange = {
-                        gestDur = it.toInt()
-                        Cfg.setGestureDurationMs(ctx, gestDur)
+                        s.gestDur = it.toInt()
+                        Cfg.setGestureDurationMs(ctx, s.gestDur)
                     }
                 )
                 Text(
@@ -530,12 +789,12 @@ Divider(color = CBorder.copy(alpha = 0.3f))
                 SliderRow(
                     icon = Icons.Filled.OpenInFull,
                     title = "单次最大位移",
-                    valueText = "$maxSwipe 像素",
-                    value = maxSwipe.toFloat(),
+                    valueText = "${s.maxSwipe} 像素",
+                    value = s.maxSwipe.toFloat(),
                     range = 90f..900f,
                     onChange = {
-                        maxSwipe = it.toInt()
-                        Cfg.setMaxSwipePx(ctx, maxSwipe)
+                        s.maxSwipe = it.toInt()
+                        Cfg.setMaxSwipePx(ctx, s.maxSwipe)
                     }
                 )
             }
@@ -543,59 +802,73 @@ Divider(color = CBorder.copy(alpha = 0.3f))
             Spacer(Modifier.height(16.dp))
 
             // ---------- 快捷暂停 ----------
-            SectionLabel("快捷暂停")
+
+        Spacer(Modifier.height(16.dp))
+
+            // ---------- 震动反馈 ----------
+            SectionLabel("震动反馈")
             SettingsCard {
-                Column(Modifier.padding(16.dp)) {
-                    Text(
-                        if (pausedLeft > 0)
-                            "已暂停，剩余 $pausedLeft 分钟"
-                        else "当前未暂停",
-                        fontSize = 14.sp,
-                        color = if (pausedLeft > 0) ComposeColor(0xFFF59E0B) else CForeground
+                SwitchRow(
+                    icon = Icons.Filled.Vibration,
+                    title = "转动震动",
+                    subtitle = "每触发一次滑动震一下",
+                    checked = s.haptic
+                ) {
+                    s.haptic = it
+                    Cfg.setHaptic(ctx, it)
+                }
+                if (s.haptic) {
+                    Divider(color = CBorder.copy(alpha = 0.3f))
+                    SliderRow(
+                        icon = Icons.Filled.FitnessCenter,
+                        title = "震动强度",
+                        valueText = "${s.hapticAmp}",
+                        value = s.hapticAmp.toFloat(),
+                        range = 10f..255f,
+                        onChange = {
+                            s.hapticAmp = it.toInt()
+                            Cfg.setHapticAmp(ctx, s.hapticAmp)
+                        }
                     )
-                    Spacer(Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        SmallBtn("暂停 1 分钟") {
-                            Cfg.pauseFor(ctx, 1)
-                            pausedLeft = 1
+                    Divider(color = CBorder.copy(alpha = 0.3f))
+                    SliderRow(
+                        icon = Icons.Filled.Timelapse,
+                        title = "震动时长",
+                        valueText = "${s.hapticMs} 毫秒",
+                        value = s.hapticMs.toFloat(),
+                        range = 5f..100f,
+                        onChange = {
+                            s.hapticMs = it.toInt()
+                            Cfg.setHapticMs(ctx, s.hapticMs)
                         }
-                        SmallBtn("暂停 10 分钟") {
-                            Cfg.pauseFor(ctx, 10)
-                            pausedLeft = 10
-                        }
-                        SmallBtn("恢复") {
-                            Cfg.resumeNow(ctx)
-                            pausedLeft = 0
-                        }
-                    }
+                    )
                 }
             }
+            Spacer(Modifier.height(16.dp))
 
-            Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(24.dp))
 
-            // ---------- 说明 ----------
-            Text(
-                "使用提示",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-                color = CForeground
-            )
-            Spacer(Modifier.height(8.dp))
-            listOf(
-                "先开启无障碍服务，再启动控制服务",
-                "建议把本应用的电池策略设为「无限制」，避免后台被杀",
-                "方向反了打开「反转方向」即可",
-                "一顿一顿的时候调大死区"
-            ).forEach {
-                Row(Modifier.padding(vertical = 3.dp)) {
-                    Text("· ", color = CAccent, fontSize = 13.sp)
-                    Text(it, color = CMutedFg, fontSize = 13.sp, lineHeight = 19.sp)
-                }
+        // ---------- 使用提示 ----------
+        Text(
+            "使用提示",
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            color = CForeground
+        )
+        Spacer(Modifier.height(8.dp))
+        listOf(
+            "先开启无障碍服务，再启动控制服务",
+            "建议把本应用的电池策略设为「无限制」，避免后台被杀",
+            "方向反了打开「反转方向」即可",
+            "一顿一顿的时候调大死区或平滑窗口"
+        ).forEach {
+            Row(Modifier.padding(vertical = 3.dp)) {
+                Text("· ", color = CAccent, fontSize = 13.sp)
+                Text(it, color = CMutedFg, fontSize = 13.sp, lineHeight = 19.sp)
             }
         }
+    }
 }
-}
-
 // ==================== 组件 ====================
 
 @Composable
@@ -723,7 +996,7 @@ private fun SetupCard(
                 SetupItem(
                     number = "1",
                     title = "开启无障碍服务",
-                    desc = "没有它就无法执行滑动操作",
+                    desc = "没有它无法执行滑动。注意：从最近任务划掉本应用会导致它失效，需重新开启",
                     action = "去开启",
                     onAction = onAccClick
                 )
@@ -1179,11 +1452,12 @@ fun AboutScreen(activity: ComponentActivity, onBack: () -> Unit) {
                         .background(CAccent.copy(alpha = 0.15f)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        Icons.Filled.SettingsRemote,
+                    androidx.compose.foundation.Image(
+                        painter = androidx.compose.ui.res.painterResource(R.mipmap.app_icon_small),
                         contentDescription = null,
-                        tint = CAccent,
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier
+                            .size(64.dp)
+                            .clip(RoundedCornerShape(16.dp))
                     )
                 }
                 Spacer(Modifier.width(16.dp))
@@ -1344,8 +1618,211 @@ fun AboutScreen(activity: ComponentActivity, onBack: () -> Unit) {
         }
     }
 }
+// ==================== Tab 2：应用 ====================
+
 @Composable
-fun AppSettingsScreen(activity: ComponentActivity, onBack: () -> Unit) {
+fun AppTabHost(activity: ComponentActivity, s: RingStateHolder) {
+    AppTab(activity)
+}
+
+/**
+ * 页面路由：
+ *   0 = 已设置列表
+ *   1 = 添加应用（搜索）
+ *   2 = 某个 App 的独立设置
+ */
+@Composable
+fun AppTab(activity: ComponentActivity) {
+    var page by remember { mutableIntStateOf(0) }
+    var editingPkg by remember { mutableStateOf<String?>(null) }
+    var refreshKey by remember { mutableIntStateOf(0) }
+
+    when (page) {
+        1 -> AddAppScreen(
+            activity = activity,
+            onBack = { page = 0; refreshKey++ }
+        )
+        2 -> AppDetailScreen(
+            activity = activity,
+            pkg = editingPkg,
+            onBack = { page = 0; refreshKey++ }
+        )
+        else -> ConfiguredAppList(
+            activity = activity,
+            refreshKey = refreshKey,
+            onAdd = { page = 1 },
+            onOpen = { pkg -> editingPkg = pkg; page = 2 }
+        )
+    }
+}
+
+/** 已设置列表：只显示动过的 App */
+@Composable
+private fun ConfiguredAppList(
+    activity: ComponentActivity,
+    refreshKey: Int,
+    onAdd: () -> Unit,
+    onOpen: (String) -> Unit
+) {
+    val ctx = activity
+
+    // 可变状态：切换开关后立即刷新，不用退出页面重进
+    var onSet by remember(refreshKey) { mutableStateOf(AppCfg.enabledPkgs(ctx)) }
+    var offSet by remember(refreshKey) { mutableStateOf(AppCfg.disabledPkgs(ctx)) }
+
+    // 只查询被设置过的那几个 App，不做全量扫描
+    var configured by remember(refreshKey) {
+        mutableStateOf(
+            AppList.loadByPkgs(ctx, HashSet<String>().apply {
+                addAll(onSet)
+                addAll(offSet)
+            }).sortedBy { it.label }
+        )
+    }
+
+    /** 重新读取配置并刷新列表 */
+    fun reload() {
+        onSet = AppCfg.enabledPkgs(ctx)
+        offSet = AppCfg.disabledPkgs(ctx)
+        configured = AppList.loadByPkgs(ctx, HashSet<String>().apply {
+            addAll(onSet)
+            addAll(offSet)
+        }).sortedBy { it.label }
+    }
+
+
+    Column(Modifier.fillMaxSize()) {
+        // ---------- 标题 ----------
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 12.dp, top = 20.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "按应用设置",
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = CForeground
+                )
+            }
+            TextButton(onClick = { onAdd() }) {
+                Icon(
+                    Icons.Filled.Add,
+                    contentDescription = null,
+                    tint = CAccent,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(4.dp))
+                Text("添加", fontSize = 14.sp, color = CAccent)
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "为单个 App 指定是否响应变焦环",
+            fontSize = 14.sp,
+            color = CMutedFg,
+            modifier = Modifier.padding(horizontal = 16.dp)
+        )
+        Spacer(Modifier.height(16.dp))
+
+        // ---------- 说明 ----------
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(CCard)
+                .padding(horizontal = 14.dp, vertical = 12.dp)
+        ) {
+            Text("说明", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = CForeground)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "· 全局开关关闭时，默认所有 App 都不生效\n· 在这里单独打开的 App，会直接生效（不受全局开关影响）\n· 未单独设置的 App，跟随全局开关",
+                fontSize = 12.sp,
+                color = CMutedFg,
+                lineHeight = 19.sp
+            )
+        }
+
+        Spacer(Modifier.height(20.dp))
+
+        // ---------- 已设置列表 ----------
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "已设置的应用",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                color = CForeground,
+                modifier = Modifier.weight(1f)
+            )
+            if (configured.isNotEmpty()) {
+                Text("${configured.size} 个", fontSize = 12.sp, color = CMutedFg)
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+
+        if (configured.isEmpty()) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(CCard)
+                    .padding(vertical = 28.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("还没有单独设置的应用", fontSize = 14.sp, color = CMutedFg)
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "点下方「添加应用」挑选",
+                        fontSize = 12.sp,
+                        color = CMutedFg.copy(alpha = 0.7f)
+                    )
+                }
+            }
+        } else {
+            LazyColumn(Modifier.weight(1f)) {
+                items(configured.size) { idx ->
+                    val app = configured[idx]
+                    val st = when {
+                        onSet.contains(app.pkg) -> 1
+                        offSet.contains(app.pkg) -> -1
+                        else -> 0
+                    }
+                    AppRow(
+                        app = app,
+                        state = st,
+                        onClick = { onOpen(app.pkg) },
+                        onToggle = { on ->
+                            AppCfg.setAppState(ctx, app.pkg, if (on) 1 else -1)
+                            reload()
+                        },
+                        onDelete = {
+                            AppCfg.clearAllOverrides(ctx, app.pkg)
+                            AppCfg.setAppState(ctx, app.pkg, 0)
+                            reload()
+                        }
+                    )
+                    Divider(color = CBorder.copy(alpha = 0.2f))
+                }
+                item { Spacer(Modifier.height(16.dp)) }
+            }
+        }
+
+    }
+}
+
+/** 添加应用：全量列表 + 搜索 */
+@Composable
+private fun AddAppScreen(activity: ComponentActivity, onBack: () -> Unit) {
     val ctx = activity
     var apps by remember { mutableStateOf<List<AppList.Item>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
@@ -1361,8 +1838,8 @@ fun AppSettingsScreen(activity: ComponentActivity, onBack: () -> Unit) {
         loading = false
     }
 
-    val enabledSet = remember(refreshKey) { AppCfg.enabledPkgs(ctx) }
-    val disabledSet = remember(refreshKey) { AppCfg.disabledPkgs(ctx) }
+    var onSet by remember(refreshKey) { mutableStateOf(AppCfg.enabledPkgs(ctx)) }
+    var offSet by remember(refreshKey) { mutableStateOf(AppCfg.disabledPkgs(ctx)) }
 
     val filtered = remember(apps, keyword) {
         if (keyword.isBlank()) apps
@@ -1371,11 +1848,8 @@ fun AppSettingsScreen(activity: ComponentActivity, onBack: () -> Unit) {
         }
     }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .windowInsetsPadding(WindowInsets.systemBars)
-    ) {
+    Column(Modifier.fillMaxSize()) {
+        // 顶栏
         Row(
             Modifier
                 .fillMaxWidth()
@@ -1386,7 +1860,7 @@ fun AppSettingsScreen(activity: ComponentActivity, onBack: () -> Unit) {
             IconButton(onClick = onBack) {
                 Icon(Icons.Filled.ArrowBack, contentDescription = "返回", tint = CForeground)
             }
-            Text("按应用设置", fontSize = 19.sp, fontWeight = FontWeight.Medium, color = CForeground)
+            Text("添加应用", fontSize = 19.sp, fontWeight = FontWeight.Medium, color = CForeground)
         }
 
         OutlinedTextField(
@@ -1415,11 +1889,18 @@ fun AppSettingsScreen(activity: ComponentActivity, onBack: () -> Unit) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .clickable { showSystem = !showSystem }
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                .heightIn(min = 48.dp)
+                .padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("显示系统应用", fontSize = 13.sp, color = CMutedFg, modifier = Modifier.weight(1f))
+            Text(
+                "显示系统应用",
+                fontSize = 13.sp,
+                color = CMutedFg,
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable { showSystem = !showSystem }
+            )
             Switch(
                 checked = showSystem,
                 onCheckedChange = { showSystem = it },
@@ -1429,13 +1910,6 @@ fun AppSettingsScreen(activity: ComponentActivity, onBack: () -> Unit) {
                 )
             )
         }
-
-        Text(
-            "未单独设置的 App 跟随「启用控制」全局开关",
-            fontSize = 11.sp,
-            color = CMutedFg,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-        )
 
         Spacer(Modifier.height(4.dp))
 
@@ -1448,15 +1922,16 @@ fun AppSettingsScreen(activity: ComponentActivity, onBack: () -> Unit) {
                 items(filtered.size) { idx ->
                     val app = filtered[idx]
                     val st = when {
-                        enabledSet.contains(app.pkg) -> 1
-                        disabledSet.contains(app.pkg) -> -1
+                        onSet.contains(app.pkg) -> 1
+                        offSet.contains(app.pkg) -> -1
                         else -> 0
                     }
                     AppRow(
                         app = app,
                         state = st,
+                        onClick = { AppCfg.setAppState(ctx, app.pkg, if (st == 1) 0 else 1); refreshKey++ },
                         onToggle = { on ->
-                            AppCfg.setAppState(ctx, app.pkg, if (on) 1 else -1)
+                            AppCfg.setAppState(ctx, app.pkg, if (on) 1 else 0)
                             refreshKey++
                         }
                     )
@@ -1467,35 +1942,501 @@ fun AppSettingsScreen(activity: ComponentActivity, onBack: () -> Unit) {
         }
     }
 }
+
+/** 单个 App 的完整独立设置 */
+@Composable
+private fun AppDetailScreen(activity: ComponentActivity, pkg: String?, onBack: () -> Unit) {
+    val ctx = activity
+    BackHandler(enabled = true) { onBack() }
+
+    if (pkg == null) {
+        onBack()
+        return
+    }
+
+    var apps by remember { mutableStateOf<List<AppList.Item>>(emptyList()) }
+    LaunchedEffect(pkg) {
+        apps = withContext(Dispatchers.IO) {
+            AppList.load(ctx, true) + AppList.load(ctx, false)
+        }
+    }
+    val app = remember(apps, pkg) { apps.firstOrNull { it.pkg == pkg } }
+
+    var state by remember { mutableIntStateOf(AppCfg.getAppState(ctx, pkg)) }
+
+    // 参数是否被覆盖
+    var ovMode by remember { mutableStateOf(AppCfg.hasOverride(ctx, pkg, "mode")) }
+    var ovAxis by remember { mutableStateOf(AppCfg.hasOverride(ctx, pkg, "axis")) }
+    var ovSens by remember { mutableStateOf(AppCfg.hasOverride(ctx, pkg, "sens")) }
+    var ovUnit by remember { mutableStateOf(AppCfg.hasOverride(ctx, pkg, "unit")) }
+    var ovStep by remember { mutableStateOf(AppCfg.hasOverride(ctx, pkg, "step")) }
+    var ovDead by remember { mutableStateOf(AppCfg.hasOverride(ctx, pkg, "dead")) }
+    var ovFixed by remember { mutableStateOf(AppCfg.hasOverride(ctx, pkg, "fixed")) }
+    var ovFixedSide by remember { mutableStateOf(AppCfg.hasOverride(ctx, pkg, "fixed_side")) }
+
+    // 参数值（有覆盖读覆盖，否则读全局作为初值）
+    var mode by remember { mutableIntStateOf(AppCfg.getInt(ctx, pkg, "mode", Cfg.mode(ctx))) }
+    var axis by remember { mutableIntStateOf(AppCfg.getInt(ctx, pkg, "axis", Cfg.axis(ctx))) }
+    var sens by remember { mutableFloatStateOf(AppCfg.getFloat(ctx, pkg, "sens", Cfg.sens(ctx))) }
+    var unit by remember { mutableFloatStateOf(AppCfg.getFloat(ctx, pkg, "unit", Cfg.wheelUnit(ctx))) }
+    var step by remember { mutableIntStateOf(AppCfg.getInt(ctx, pkg, "step", Cfg.stepPx(ctx))) }
+    var dead by remember { mutableFloatStateOf(AppCfg.getFloat(ctx, pkg, "dead", Cfg.deadzone(ctx))) }
+    var fixedDir by remember { mutableStateOf(AppCfg.getBool(ctx, pkg, "fixed", Cfg.fixedDir(ctx))) }
+    var fixedSide by remember { mutableIntStateOf(AppCfg.getInt(ctx, pkg, "fixed_side", Cfg.fixedDirSide(ctx))) }
+
+    fun refreshOv() {
+        ovMode = AppCfg.hasOverride(ctx, pkg, "mode")
+        ovAxis = AppCfg.hasOverride(ctx, pkg, "axis")
+        ovSens = AppCfg.hasOverride(ctx, pkg, "sens")
+        ovUnit = AppCfg.hasOverride(ctx, pkg, "unit")
+        ovStep = AppCfg.hasOverride(ctx, pkg, "step")
+        ovDead = AppCfg.hasOverride(ctx, pkg, "dead")
+        ovFixed = AppCfg.hasOverride(ctx, pkg, "fixed")
+        ovFixedSide = AppCfg.hasOverride(ctx, pkg, "fixed_side")
+    }
+
+    /** 把全部参数切成自定义（保留当前显示值） */
+    fun enableAllOverrides() {
+        AppCfg.setInt(ctx, pkg, "mode", mode)
+        AppCfg.setInt(ctx, pkg, "axis", axis)
+        AppCfg.setFloat(ctx, pkg, "sens", sens)
+        AppCfg.setFloat(ctx, pkg, "unit", unit)
+        AppCfg.setInt(ctx, pkg, "step", step)
+        AppCfg.setFloat(ctx, pkg, "dead", dead)
+        AppCfg.setBool(ctx, pkg, "fixed", fixedDir)
+        AppCfg.setInt(ctx, pkg, "fixed_side", fixedSide)
+        refreshOv()
+    }
+
+    /** 把全局当前值复制到这个 App（并切成自定义） */
+    fun copyGlobal() {
+        mode = Cfg.mode(ctx)
+        axis = Cfg.axis(ctx)
+        sens = Cfg.sens(ctx)
+        unit = Cfg.wheelUnit(ctx)
+        step = Cfg.stepPx(ctx)
+        dead = Cfg.deadzone(ctx)
+        fixedDir = Cfg.fixedDir(ctx)
+        fixedSide = Cfg.fixedDirSide(ctx)
+        enableAllOverrides()
+    }
+
+
+    Column(Modifier.fillMaxSize()) {
+        // 顶栏
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 56.dp)
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.Filled.ArrowBack, contentDescription = "返回", tint = CForeground)
+            }
+            Text(
+                app?.label ?: pkg,
+                fontSize = 19.sp,
+                fontWeight = FontWeight.Medium,
+                color = CForeground,
+                maxLines = 1,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = {
+                AppCfg.clearAllOverrides(ctx, pkg)
+                mode = Cfg.mode(ctx)
+                axis = Cfg.axis(ctx)
+                sens = Cfg.sens(ctx)
+                unit = Cfg.wheelUnit(ctx)
+                step = Cfg.stepPx(ctx)
+                dead = Cfg.deadzone(ctx)
+                refreshOv()
+            }) {
+                Text("全部跟随全局", fontSize = 12.sp, color = CAccent)
+            }
+            TextButton(onClick = { copyGlobal() }) {
+                Text("复制全局", fontSize = 12.sp, color = CAccent)
+            }
+        }
+
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
+        ) {
+            // 应用信息
+            if (app != null) {
+                AppIconLarge(app)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    pkg,
+                    fontSize = 11.sp,
+                    color = CMutedFg,
+                    modifier = Modifier.padding(start = 4.dp)
+                )
+                Spacer(Modifier.height(20.dp))
+            }
+
+            // ---------- 响应开关 ----------
+            SectionLabel("是否响应")
+            SettingsCard {
+                ModeRow(
+                    Icons.Filled.PowerSettingsNew,
+                    "单独特定启用",
+                    "打开后直接生效，下面的参数会自动切成自定义",
+                    state == 1
+                ) {
+                    state = if (state == 1) 0 else 1
+                    AppCfg.setAppState(ctx, pkg, state)
+                    // 启用独立设置时，把全部参数切成自定义
+                    if (state == 1) {
+                        enableAllOverrides()
+                    }
+                }
+                Divider(color = CBorder.copy(alpha = 0.3f))
+                ModeRow(
+                    Icons.Filled.Block,
+                    "单独禁用",
+                    "无论全局开关如何，这个 App 都不响应",
+                    state == -1
+                ) {
+                    state = if (state == -1) 0 else -1
+                    AppCfg.setAppState(ctx, pkg, state)
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                when (state) {
+                    1 -> "当前：已单独启用（强生效）"
+                    -1 -> "当前：已单独禁用（强屏蔽）"
+                    else -> "当前：未单独设置，跟随全局开关"
+                },
+                fontSize = 12.sp,
+                color = CMutedFg,
+                modifier = Modifier.padding(start = 4.dp)
+            )
+
+            Spacer(Modifier.height(20.dp))
+
+            // ---------- 滚动模式 ----------
+            OvHeader(
+                "滚动模式",
+                ovMode,
+                onFollow = {
+                    AppCfg.clearOverride(ctx, pkg, "mode")
+                    mode = Cfg.mode(ctx)
+                    refreshOv()
+                },
+                onCustom = {
+                    AppCfg.setInt(ctx, pkg, "mode", mode)
+                    refreshOv()
+                }
+            )
+            SettingsCard {
+                ModeRow(Icons.Filled.Mouse, "无障碍滑动", "用无障碍发触摸手势", mode == Cfg.MODE_SEGMENT) {
+                    mode = Cfg.MODE_SEGMENT
+                    if (ovMode) AppCfg.setInt(ctx, pkg, "mode", mode)
+                }
+
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            // ---------- 滑动方向 ----------
+            OvHeader(
+                "滑动方向",
+                ovAxis,
+                onFollow = {
+                    AppCfg.clearOverride(ctx, pkg, "axis")
+                    axis = Cfg.axis(ctx)
+                    refreshOv()
+                },
+                onCustom = {
+                    AppCfg.setInt(ctx, pkg, "axis", axis)
+                    refreshOv()
+                }
+            )
+            SettingsCard {
+                ModeRow(
+                    Icons.Filled.SwapVert,
+                    "竖直滑动",
+                    "上下滚动列表、刷信息流",
+                    axis == Cfg.AXIS_VERTICAL
+                ) {
+                    axis = Cfg.AXIS_VERTICAL
+                    if (ovAxis) AppCfg.setInt(ctx, pkg, "axis", axis)
+                }
+                Divider(color = CBorder.copy(alpha = 0.3f))
+                ModeRow(
+                    Icons.Filled.SwapHoriz,
+                    "水平滑动",
+                    "左右切换页面、翻卡片",
+                    axis == Cfg.AXIS_HORIZONTAL
+                ) {
+                    axis = Cfg.AXIS_HORIZONTAL
+                    if (ovAxis) AppCfg.setInt(ctx, pkg, "axis", axis)
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            // ---------- 固定方向 ----------
+            OvHeader(
+                "固定方向",
+                ovFixed,
+                onFollow = {
+                    AppCfg.clearOverride(ctx, pkg, "fixed")
+                    fixedDir = Cfg.fixedDir(ctx)
+                    refreshOv()
+                },
+                onCustom = {
+                    AppCfg.setBool(ctx, pkg, "fixed", fixedDir)
+                    refreshOv()
+                }
+            )
+            SettingsCard {
+                SwitchRow(
+                    icon = Icons.Filled.SwapHoriz,
+                    title = "固定方向",
+                    subtitle = "不管往前还是往后转，都只往一个方向滚动",
+                    checked = fixedDir
+                ) {
+                    fixedDir = it
+                    if (ovFixed) AppCfg.setBool(ctx, pkg, "fixed", it)
+                }
+                if (fixedDir) {
+                    Divider(color = CBorder.copy(alpha = 0.3f))
+                    ModeRow(
+                        Icons.Filled.ArrowUpward,
+                        "固定往正方向",
+                        "正转反转都按正方向滚",
+                        fixedSide == Cfg.FIXED_POSITIVE
+                    ) {
+                        fixedSide = Cfg.FIXED_POSITIVE
+                        if (ovFixedSide) AppCfg.setInt(ctx, pkg, "fixed_side", fixedSide)
+                    }
+                    Divider(color = CBorder.copy(alpha = 0.3f))
+                    ModeRow(
+                        Icons.Filled.ArrowDownward,
+                        "固定往反方向",
+                        "正转反转都按反方向滚",
+                        fixedSide == Cfg.FIXED_NEGATIVE
+                    ) {
+                        fixedSide = Cfg.FIXED_NEGATIVE
+                        if (ovFixedSide) AppCfg.setInt(ctx, pkg, "fixed_side", fixedSide)
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            // ---------- 参数 ----------
+            OvHeader(
+                "灵敏度",
+                ovSens,
+                onFollow = {
+                    AppCfg.clearOverride(ctx, pkg, "sens")
+                    sens = Cfg.sens(ctx)
+                    refreshOv()
+                },
+                onCustom = {
+                    AppCfg.setFloat(ctx, pkg, "sens", sens)
+                    refreshOv()
+                }
+            )
+            SettingsCard {
+                SliderRow(
+                    icon = Icons.Filled.Speed,
+                    title = "灵敏度",
+                    valueText = String.format("%.1f 倍", sens),
+                    value = sens,
+                    range = 0.2f..5.0f,
+                    onChange = {
+                        sens = it
+                        if (ovSens) AppCfg.setFloat(ctx, pkg, "sens", it)
+                    }
+                )
+                Divider(color = CBorder.copy(alpha = 0.3f))
+                SliderRow(
+                    icon = Icons.Filled.Straighten,
+                    title = "一格触发阈值",
+                    valueText = String.format("%.0f", unit),
+                    value = unit,
+                    range = 20f..400f,
+                    onChange = {
+                        unit = it
+                        if (ovUnit) AppCfg.setFloat(ctx, pkg, "unit", it)
+                    }
+                )
+                Divider(color = CBorder.copy(alpha = 0.3f))
+                SliderRow(
+                    icon = Icons.Filled.SwapVert,
+                    title = "每格滑动像素",
+                    valueText = "$step",
+                    value = step.toFloat(),
+                    range = 90f..580f,
+                    onChange = {
+                        step = it.toInt()
+                        if (ovStep) AppCfg.setInt(ctx, pkg, "step", step)
+                    }
+                )
+                Divider(color = CBorder.copy(alpha = 0.3f))
+                SliderRow(
+                    icon = Icons.Filled.Tune,
+                    title = "死区",
+                    valueText = String.format("%.1f", dead),
+                    value = dead,
+                    range = 0f..30f,
+                    onChange = {
+                        dead = it
+                        if (ovDead) AppCfg.setFloat(ctx, pkg, "dead", it)
+                    }
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "开启「自定义」后，这个 App 才使用自己的参数；「跟随全局」时随时同步全局设置。",
+                fontSize = 12.sp,
+                color = CMutedFg,
+                modifier = Modifier.padding(start = 4.dp)
+            )
+
+            Spacer(Modifier.height(32.dp))
+        }
+    }
+}
+
+/** 参数分组头：标题 + 跟随全局/自定义 切换 */
+@Composable
+private fun OvHeader(
+    title: String,
+    isCustom: Boolean,
+    onFollow: () -> Unit,
+    onCustom: () -> Unit
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            title,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            color = CForeground,
+            modifier = Modifier.weight(1f)
+        )
+        Row(
+            Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .background(CMuted)
+                .padding(2.dp)
+        ) {
+            // 跟随全局
+            Box(
+                Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(if (!isCustom) CAccent else androidx.compose.ui.graphics.Color.Transparent)
+                    .clickable { if (isCustom) onFollow() }
+                    .padding(horizontal = 10.dp, vertical = 5.dp)
+            ) {
+                Text(
+                    "跟随全局",
+                    fontSize = 11.sp,
+                    color = if (!isCustom) COnAccent else CMutedFg
+                )
+            }
+            // 自定义
+            Box(
+                Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(if (isCustom) CAccent else androidx.compose.ui.graphics.Color.Transparent)
+                    .clickable { if (!isCustom) onCustom() }
+                    .padding(horizontal = 10.dp, vertical = 5.dp)
+            ) {
+                Text(
+                    "自定义",
+                    fontSize = 11.sp,
+                    color = if (isCustom) COnAccent else CMutedFg
+                )
+            }
+        }
+    }
+}
+@Composable
+private fun AppIconLarge(app: AppList.Item) {
+    val bmp = remember(app.pkg) {
+        app.icon?.let { runCatching { drawableToBitmap(it).asImageBitmap() }.getOrNull() }
+    }
+    Box(Modifier.padding(start = 4.dp)) {
+        if (bmp != null) {
+            androidx.compose.foundation.Image(
+                bitmap = bmp,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(64.dp)
+                    .clip(RoundedCornerShape(16.dp))
+            )
+        } else {
+            Box(
+                Modifier
+                    .size(64.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(CMuted),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    app.label.take(1),
+                    fontSize = 26.sp,
+                    color = CAccent,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun AppRow(
     app: AppList.Item,
     state: Int,
-    onToggle: (Boolean) -> Unit
+    onClick: () -> Unit,
+    onToggle: (Boolean) -> Unit,
+    onDelete: (() -> Unit)? = null
 ) {
     Row(
         Modifier
             .fillMaxWidth()
             .heightIn(min = 60.dp)
+            .clickable { onClick() }
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(
-            Modifier
-                .size(40.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(CMuted),
-            contentAlignment = Alignment.Center
-        ) {
-            if (app.icon != null) {
-                androidx.compose.foundation.Image(
-                    bitmap = drawableToBitmap(app.icon).asImageBitmap(),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                )
-            } else {
+        // 图标：圆角裁切作用于图片本身，外面不再叠容器圆角
+        val iconBmp = remember(app.pkg) {
+            app.icon?.let { runCatching { drawableToBitmap(it).asImageBitmap() }.getOrNull() }
+        }
+        if (iconBmp != null) {
+            androidx.compose.foundation.Image(
+                bitmap = iconBmp,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(10.dp))
+            )
+        } else {
+            Box(
+                Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(CMuted),
+                contentAlignment = Alignment.Center
+            ) {
                 Text(
                     app.label.take(1),
                     fontSize = 18.sp,
@@ -1514,26 +2455,36 @@ private fun AppRow(
                 color = CForeground,
                 maxLines = 1
             )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                when (state) {
-                    1 -> "已启用"
-                    -1 -> "已禁用"
-                    else -> "跟随全局"
-                },
-                fontSize = 11.sp,
-                color = when (state) {
-                    1 -> CAccent
-                    -1 -> CDestructive
-                    else -> CMutedFg
-                }
-            )
+            // 只有设置过的才显示状态文字
+            if (state != 0) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    if (state == 1) "已启用" else "已禁用",
+                    fontSize = 11.sp,
+                    color = if (state == 1) CAccent else CDestructive
+                )
+            }
         }
 
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(4.dp))
+
+        // 删除：清掉这个 App 的所有独立设置，回到跟随全局
+        if (onDelete != null) {
+            IconButton(
+                onClick = onDelete,
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(
+                    Icons.Filled.DeleteOutline,
+                    contentDescription = "清除设置",
+                    tint = CMutedFg,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
 
         Switch(
-            checked = state != -1,
+            checked = state == 1,
             onCheckedChange = onToggle,
             colors = SwitchDefaults.colors(
                 checkedThumbColor = COnAccent,
@@ -1544,7 +2495,7 @@ private fun AppRow(
         )
     }
 }
-/** Drawable 转 Bitmap，用于显示应用图标 */
+
 private fun drawableToBitmap(d: android.graphics.drawable.Drawable): android.graphics.Bitmap {
     val w = if (d.intrinsicWidth > 0) d.intrinsicWidth else 48
     val h = if (d.intrinsicHeight > 0) d.intrinsicHeight else 48

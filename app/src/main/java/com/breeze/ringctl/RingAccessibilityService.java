@@ -24,7 +24,6 @@ public class RingAccessibilityService extends AccessibilityService {
     private final Handler ui = new Handler(Looper.getMainLooper());
     private volatile boolean gestureBusy = false;
 
-    private DragSession dragSession;
 
     /** 当前前台包名，供按应用配置判断 */
     public static volatile String foregroundPkg = "";
@@ -58,13 +57,65 @@ public class RingAccessibilityService extends AccessibilityService {
             return;
         }
         int type = event.getEventType();
-        if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
-                || type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
-            String pkg = event.getPackageName().toString();
-            if (pkg != null && !pkg.isEmpty()) {
-                foregroundPkg = pkg;
-            }
+        // 只认窗口状态变化；WINDOWS_CHANGED 常由系统窗口触发，包名不可靠
+        if (type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            return;
         }
+        String pkg = event.getPackageName() == null ? "" : event.getPackageName().toString();
+        if (pkg.length() == 0) {
+            return;
+        }
+        // 过滤系统自身和非应用包
+        if (pkg.equals("android") || pkg.equals("com.android.systemui")) {
+            return;
+        }
+        foregroundPkg = pkg;
+    }
+
+    /**
+     * 主动查一次当前前台包名。
+     * 有些 App 启动后不再发 window state change，靠事件会滞后。
+     */
+    private static long lastResolveMs = 0L;
+    private static final long RESOLVE_INTERVAL_MS = 300L;
+
+    public static String resolveForegroundPkg() {
+        RingAccessibilityService svc = instance;
+        if (svc == null) {
+            return foregroundPkg;
+        }
+        // 节流：getWindows 开销不小，不要每帧都查
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (now - lastResolveMs < RESOLVE_INTERVAL_MS) {
+            return foregroundPkg;
+        }
+        lastResolveMs = now;
+        try {
+            java.util.List<android.view.accessibility.AccessibilityWindowInfo> ws = svc.getWindows();
+            if (ws != null) {
+                for (android.view.accessibility.AccessibilityWindowInfo w : ws) {
+                    if (w == null) {
+                        continue;
+                    }
+                    if (w.getType() != android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) {
+                        continue;
+                    }
+                    if (w.isActive() == false && w.isFocused() == false) {
+                        continue;
+                    }
+                    android.view.accessibility.AccessibilityNodeInfo root = w.getRoot();
+                    if (root != null && root.getPackageName() != null) {
+                        String p = root.getPackageName().toString();
+                        if (p.length() > 0) {
+                            foregroundPkg = p;
+                            return p;
+                        }
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return foregroundPkg;
     }
 
     @Override
@@ -73,7 +124,6 @@ public class RingAccessibilityService extends AccessibilityService {
 
     @Override
     public boolean onUnbind(android.content.Intent intent) {
-        releaseDrag();
         instance = null;
         foregroundPkg = "";
         return super.onUnbind(intent);
@@ -81,51 +131,12 @@ public class RingAccessibilityService extends AccessibilityService {
 
     @Override
     public void onDestroy() {
-        releaseDrag();
         instance = null;
         foregroundPkg = "";
         super.onDestroy();
     }
 
-    // ==================== 连续拖拽 ====================
 
-    public void dragFeed(float delta, boolean horizontal) {
-        if (delta == 0f && dragSession == null) {
-            return;
-        }
-        if (dragSession == null || !dragSession.isActive()) {
-            int[] size = screenSize();
-            if (size[0] <= 0 || size[1] <= 0) {
-                return;
-            }
-            dragSession = new DragSession(this, horizontal, size[0], size[1], () -> {
-            });
-            dragSession.start(delta);
-        } else {
-            dragSession.feed(delta);
-        }
-    }
-
-    public void dragStop() {
-        if (dragSession != null) {
-            dragSession.stop();
-            dragSession = null;
-        }
-    }
-
-    public boolean isDragging() {
-        return dragSession != null && dragSession.isActive();
-    }
-
-    private void releaseDrag() {
-        try {
-            if (dragSession != null) {
-                dragSession.stop();
-            }
-        } catch (Exception ignored) {
-        }
-        dragSession = null;
-    }
 
     // ==================== 单次滑动 ====================
 

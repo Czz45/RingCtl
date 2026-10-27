@@ -18,6 +18,7 @@ import android.os.IBinder;
 import android.os.SystemClock;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
+import android.widget.RemoteViews;
 import android.util.Log;
 
 import java.util.List;
@@ -172,6 +173,7 @@ private Notification buildNotification() {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
         boolean vertical = (Cfg.axis(this) == Cfg.AXIS_VERTICAL);
+        boolean enabled = Cfg.enabled(this);
 
         Intent toggleIntent = new Intent(this, RingForegroundService.class);
         toggleIntent.setAction(ACTION_TOGGLE_AXIS);
@@ -185,6 +187,16 @@ private Notification buildNotification() {
                 this, 101, enableIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
+        RemoteViews rv = new RemoteViews(getPackageName(), R.layout.notif_layout);
+        rv.setTextViewText(R.id.btn_axis, vertical ? "切到左右" : "切到上下");
+        rv.setTextViewText(R.id.btn_toggle, enabled ? "停用" : "启用");
+        rv.setTextViewText(R.id.notif_state,
+                enabled ? (vertical ? "上下" : "左右") : "已停用");
+        rv.setTextColor(R.id.notif_state,
+                enabled ? 0xFF22C55E : 0xFF94A3B8);
+        rv.setOnClickPendingIntent(R.id.btn_axis, togglePi);
+        rv.setOnClickPendingIntent(R.id.btn_toggle, enablePi);
+
         Notification.Builder b;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             b = new Notification.Builder(this, CHANNEL_ID);
@@ -192,25 +204,14 @@ private Notification buildNotification() {
             b = new Notification.Builder(this);
         }
 
-        String axisText = vertical ? "竖直滑动 上下" : "水平滑动 左右";
-        String stateText = Cfg.enabled(this) ? axisText : "已停用";
-
-        b.setContentTitle("变焦环控制")
-                .setContentText(stateText)
-                .setSmallIcon(android.R.drawable.ic_menu_compass)
+        b.setSmallIcon(android.R.drawable.ic_menu_compass)
                 .setContentIntent(pi)
                 .setOngoing(true)
-                .setShowWhen(false);
-
-        b.addAction(new Notification.Action.Builder(
-                null,
-                vertical ? "切到左右" : "切到上下",
-                togglePi).build());
-
-        b.addAction(new Notification.Action.Builder(
-                null,
-                Cfg.enabled(this) ? "停用" : "启用",
-                enablePi).build());
+                .setShowWhen(false)
+                .setContentTitle("变焦环控制")
+                .setContentText(enabled ? (vertical ? "竖直滑动" : "水平滑动") : "已停用")
+                .setCustomContentView(rv)
+                .setCustomBigContentView(rv);
 
         return b.build();
     }

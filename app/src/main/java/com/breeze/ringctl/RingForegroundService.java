@@ -467,10 +467,13 @@ private Notification buildNotification() {
         // ===== 来回扭转：独立于滚动/方向盘模式，也不吃冷却 =====
         TwistDetector td = twistDetector();
         if (td != null && td.feed(d, SystemClock.elapsedRealtime())) {
-            String val = Cfg.twistActionValue(this);
-            if (!val.isEmpty()) {
+            int at = Cfg.twistActionType(this);
+            String av = Cfg.twistActionValue(this);
+            // 播放控制类不需要填值，启动类必须填
+            boolean needValue = (at == LaunchActions.TYPE_URI || at == LaunchActions.TYPE_PACKAGE);
+            if (!needValue || (av != null && !av.isEmpty())) {
                 doHaptic();
-                LaunchActions.launch(this, Cfg.twistActionType(this), val);
+                LaunchActions.launch(this, at, av);
             }
         }
 

@@ -850,7 +850,7 @@ fun SettingsTab(
                                     color = CForeground,
                                     modifier = Modifier.weight(1f)
                                 )
-                                if (twistValue == p[2]) {
+                                if (twistValue == p[2] && twistType == p[1].toInt()) {
                                     Icon(
                                         Icons.Filled.Check,
                                         contentDescription = null,
@@ -1015,12 +1015,13 @@ fun SettingsTab(
                         )
                         Spacer(Modifier.width(14.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("启动目标", fontSize = 15.sp, color = CForeground)
+                            Text("手势动作", fontSize = 15.sp, color = CForeground)
                             Spacer(Modifier.height(2.dp))
+                            val desc = LaunchActions.describe(twistType, twistValue)
                             Text(
-                                LaunchActions.describe(twistType, twistValue),
+                                desc,
                                 fontSize = 12.sp,
-                                color = if (twistValue.isEmpty()) CDestructive else CAccent
+                                color = if (desc == "未设置") CDestructive else CAccent
                             )
                         }
                         Icon(

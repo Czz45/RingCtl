@@ -369,6 +369,24 @@ private Notification buildNotification() {
         return AppCfg.intOf(this, fgPkg(), "mode", Cfg.mode(this));
     }
 
+    private static TwistDetector sTwist;
+    private static String sTwistSig = "";
+
+    /** 按当前配置构建（或复用）手势检测器，配置变了就重建 */
+    private TwistDetector twistDetector() {
+        if (!Cfg.twistEnabled(this)) {
+            return null;
+        }
+        float swing = Math.max(5f, Cfg.twistSwing(this));
+        int flips = Math.max(2, Cfg.twistFlips(this));
+        String sig = swing + "/" + flips;
+        if (sTwist == null || !sig.equals(sTwistSig)) {
+            sTwist = new TwistDetector(swing, 800L, flips, 1500L);
+            sTwistSig = sig;
+        }
+        return sTwist;
+    }
+
     private int pAxis() {
         return AppCfg.intOf(this, fgPkg(), "axis", Cfg.axis(this));
     }
@@ -432,10 +450,6 @@ private Notification buildNotification() {
         if (!running || !isActiveForCurrentApp()) {
             return;
         }
-        // 预览模式跳过冷却：方向盘不需要节流
-        if (SystemClock.elapsedRealtime() < cooldownUntilMs) {
-            return;
-        }
         float[] v = e.values;
         if (v == null || v.length < 3) {
             return;
@@ -449,6 +463,20 @@ private Notification buildNotification() {
 
         float d = counter - lastCounter;
         lastCounter = counter;
+
+        // ===== 来回扭转：独立于滚动/方向盘模式，也不吃冷却 =====
+        TwistDetector td = twistDetector();
+        if (td != null && td.feed(d, SystemClock.elapsedRealtime())) {
+            String val = Cfg.twistActionValue(this);
+            if (!val.isEmpty()) {
+                doHaptic();
+                LaunchActions.launch(this, Cfg.twistActionType(this), val);
+            }
+        }
+
+        if (SystemClock.elapsedRealtime() < cooldownUntilMs) {
+            return;
+        }
 
         // ===== 方向盘：把转动变成摇杆角度，直接发出去 =====
         // 放在防抖/死区之前，赛车游戏要跟手，不能被滚动模式的

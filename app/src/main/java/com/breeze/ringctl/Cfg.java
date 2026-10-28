@@ -338,6 +338,53 @@ public class Cfg {
         sp(c).edit().putBoolean("pad_haptic_zero", v).apply();
     }
 
+    // ==================== 来回扭转快捷启动 ====================
+
+    /** 是否开启「来回扭转」手势 */
+    public static boolean twistEnabled(Context c) {
+        return sp(c).getBoolean("twist_on", false);
+    }
+
+    public static void setTwistEnabled(Context c, boolean v) {
+        sp(c).edit().putBoolean("twist_on", v).apply();
+    }
+
+    /** 目标类型：0 = URI/scheme，1 = 包名 */
+    public static int twistActionType(Context c) {
+        return sp(c).getInt("twist_type", LaunchActions.TYPE_URI);
+    }
+
+    public static void setTwistActionType(Context c, int v) {
+        sp(c).edit().putInt("twist_type", v).apply();
+    }
+
+    /** 目标值：scheme 或包名 */
+    public static String twistActionValue(Context c) {
+        return sp(c).getString("twist_value", "");
+    }
+
+    public static void setTwistActionValue(Context c, String v) {
+        sp(c).edit().putString("twist_value", v == null ? "" : v).apply();
+    }
+
+    /** 每个半程至少转多少计数才算数 */
+    public static float twistSwing(Context c) {
+        return sp(c).getFloat("twist_swing", 50f);
+    }
+
+    public static void setTwistSwing(Context c, float v) {
+        sp(c).edit().putFloat("twist_swing", v).apply();
+    }
+
+    /** 需要几次有效翻转（2 = 扭一个来回，3 = 扭两个来回，更不容易误触） */
+    public static int twistFlips(Context c) {
+        return sp(c).getInt("twist_flips", 2);
+    }
+
+    public static void setTwistFlips(Context c, int v) {
+        sp(c).edit().putInt("twist_flips", v).apply();
+    }
+
     /** 方向盘：归中范围（度）。只有转到这个范围内才会被慢慢吸回中心 */
     public static int padCenterWindow(Context c) {
         return sp(c).getInt("pad_center_window", 90);

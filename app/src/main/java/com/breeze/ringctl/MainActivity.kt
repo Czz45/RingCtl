@@ -701,6 +701,179 @@ fun SettingsTab(
     val ctx = activity
     s.PollLifecycle()
 
+    // ---------- 来回扭转快捷启动 ----------
+    var twistOn by remember { mutableStateOf(Cfg.twistEnabled(ctx)) }
+    var twistType by remember { mutableIntStateOf(Cfg.twistActionType(ctx)) }
+    var twistValue by remember { mutableStateOf(Cfg.twistActionValue(ctx)) }
+    var twistFlips by remember { mutableIntStateOf(Cfg.twistFlips(ctx)) }
+    var twistSwing by remember { mutableFloatStateOf(Cfg.twistSwing(ctx)) }
+    var showPicker by remember { mutableStateOf(false) }
+    var pickerGroup by remember { mutableStateOf<String?>(null) }
+    var showUriInput by remember { mutableStateOf(false) }
+    var uriDraft by remember { mutableStateOf("") }
+
+    if (showUriInput) {
+        AlertDialog(
+            onDismissRequest = { showUriInput = false },
+            containerColor = CCard,
+            titleContentColor = CForeground,
+            title = { Text("自定义启动链接", color = CForeground) },
+            text = {
+                Column {
+                    Text(
+                        "填 URI scheme（如 weixin://dl/scan）或完整包名。留空等于不设置。",
+                        fontSize = 12.sp,
+                        color = CMutedFg
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = uriDraft,
+                        onValueChange = { uriDraft = it },
+                        singleLine = true,
+                        label = { Text("值") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val v = uriDraft.trim()
+                    twistType = if (v.contains("://")) {
+                        LaunchActions.TYPE_URI
+                    } else {
+                        LaunchActions.TYPE_PACKAGE
+                    }
+                    twistValue = v
+                    Cfg.setTwistActionType(ctx, twistType)
+                    Cfg.setTwistActionValue(ctx, twistValue)
+                    showUriInput = false
+                }) {
+                    Text("保存", color = CAccent)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUriInput = false }) {
+                    Text("取消", color = CMutedFg)
+                }
+            }
+        )
+    }
+
+    if (showPicker) {
+        val groups = remember {
+            LaunchActions.PRESETS
+                .map { p -> p[0].substringBefore(" · ") to p }
+                .groupBy({ it.first }, { it.second })
+        }
+        AlertDialog(
+            onDismissRequest = { showPicker = false },
+            containerColor = CCard,
+            titleContentColor = CForeground,
+            textContentColor = CMutedFg,
+            title = { Text(pickerGroup ?: "选择要启动的功能", color = CForeground) },
+            text = {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 380.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    val g = pickerGroup
+                    if (g == null) {
+                        groups.keys.forEach { key ->
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .clickable { pickerGroup = key }
+                                    .heightIn(min = 48.dp)
+                                    .padding(horizontal = 4.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    key,
+                                    fontSize = 15.sp,
+                                    color = CForeground,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Icon(
+                                    Icons.Filled.ChevronRight,
+                                    contentDescription = null,
+                                    tint = CMutedFg,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            Divider(color = CBorder.copy(alpha = 0.2f))
+                        }
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable {
+                                    uriDraft = twistValue
+                                    showPicker = false
+                                    pickerGroup = null
+                                    showUriInput = true
+                                }
+                                .heightIn(min = 48.dp)
+                                .padding(horizontal = 4.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "自定义链接 / 包名…",
+                                fontSize = 15.sp,
+                                color = CAccent,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    } else {
+                        groups[g]?.forEach { p ->
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .clickable {
+                                        twistType = p[1].toInt()
+                                        twistValue = p[2]
+                                        Cfg.setTwistActionType(ctx, twistType)
+                                        Cfg.setTwistActionValue(ctx, twistValue)
+                                        showPicker = false
+                                        pickerGroup = null
+                                    }
+                                    .heightIn(min = 48.dp)
+                                    .padding(horizontal = 4.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    p[0].substringAfter(" · "),
+                                    fontSize = 15.sp,
+                                    color = CForeground,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (twistValue == p[2]) {
+                                    Icon(
+                                        Icons.Filled.Check,
+                                        contentDescription = null,
+                                        tint = CAccent,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                            Divider(color = CBorder.copy(alpha = 0.2f))
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (pickerGroup != null) pickerGroup = null else showPicker = false
+                }) {
+                    Text(if (pickerGroup != null) "返回" else "关闭", color = CAccent)
+                }
+            }
+        )
+    }
+
     Column(
         Modifier
             .fillMaxSize()
@@ -805,6 +978,94 @@ fun SettingsTab(
                             tint = CMutedFg
                         )
                     }
+                }
+            }
+
+            // ---------- 快捷启动 ----------
+            Spacer(Modifier.height(16.dp))
+            SectionLabel("快捷启动")
+            SettingsCard {
+                SwitchRow(
+                    icon = Icons.Filled.Gesture,
+                    title = "来回扭转",
+                    subtitle = "快速左右扭两下变焦环，直接打开指定功能",
+                    checked = twistOn
+                ) {
+                    twistOn = it
+                    Cfg.setTwistEnabled(ctx, it)
+                }
+                if (twistOn) {
+                    Divider(color = CBorder.copy(alpha = 0.3f))
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                showPicker = true
+                                pickerGroup = null
+                            }
+                            .heightIn(min = 56.dp)
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Filled.Launch,
+                            contentDescription = null,
+                            tint = CMutedFg,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(14.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("启动目标", fontSize = 15.sp, color = CForeground)
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                LaunchActions.describe(twistType, twistValue),
+                                fontSize = 12.sp,
+                                color = if (twistValue.isEmpty()) CDestructive else CAccent
+                            )
+                        }
+                        Icon(
+                            Icons.Filled.ChevronRight,
+                            contentDescription = null,
+                            tint = CMutedFg,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Divider(color = CBorder.copy(alpha = 0.3f))
+                    SliderRow(
+                        icon = Icons.Filled.Gesture,
+                        title = "扭动幅度",
+                        valueText = twistSwing.toInt().toString(),
+                        value = twistSwing,
+                        range = 15f..200f,
+                        onChange = {
+                            twistSwing = ((it.toInt() / 5) * 5).toFloat()
+                            Cfg.setTwistSwing(ctx, twistSwing)
+                        }
+                    )
+                    Text(
+                        "每个半程至少转这么多计数才算一次。容易误触就调大，扭不动就调小",
+                        fontSize = 11.sp,
+                        color = CMutedFg,
+                        modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)
+                    )
+                    Divider(color = CBorder.copy(alpha = 0.3f))
+                    SliderRow(
+                        icon = Icons.Filled.Autorenew,
+                        title = "需要翻转",
+                        valueText = twistFlips.toString() + " 次",
+                        value = twistFlips.toFloat(),
+                        range = 2f..4f,
+                        onChange = {
+                            twistFlips = it.toInt()
+                            Cfg.setTwistFlips(ctx, twistFlips)
+                        }
+                    )
+                    Text(
+                        "2 次 = 扭一个来回；调到 3 更不容易误触",
+                        fontSize = 11.sp,
+                        color = CMutedFg,
+                        modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)
+                    )
                 }
             }
 

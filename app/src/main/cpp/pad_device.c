@@ -79,24 +79,41 @@ static int pad_init_with_fd(int fd, const char *name) {
     ioctl(fd, UI_SET_KEYBIT, BTN_START);
     ioctl(fd, UI_SET_KEYBIT, BTN_THUMBL);
     ioctl(fd, UI_SET_KEYBIT, BTN_THUMBR);
-    ioctl(fd, UI_SET_KEYBIT, BTN_DPAD_UP);
-    ioctl(fd, UI_SET_KEYBIT, BTN_DPAD_DOWN);
-    ioctl(fd, UI_SET_KEYBIT, BTN_DPAD_LEFT);
-    ioctl(fd, UI_SET_KEYBIT, BTN_DPAD_RIGHT);
+    /* 十字键用 HAT 轴，不需要 BTN_DPAD_* */
+    ioctl(fd, UI_SET_KEYBIT, BTN_MODE);   /* 居中 X 键 → BUTTON_MODE */
 
+    /*
+     * 按 Vendor_045e_Product_028e.kl 的要求声明轴：
+     *   ABS_X (0x00) 左摇杆横
+     *   ABS_Y (0x01) 左摇杆纵
+     *   ABS_Z (0x02) 左扳机
+     *   ABS_RX(0x03) 在 keylayout 里写作 Z → 右摇杆横
+     *   ABS_RY(0x04) 在 keylayout 里写作 RZ → 右摇杆纵
+     *   ABS_RZ(0x05) 右扳机
+     * 十字键用 ABS_HAT0X / ABS_HAT0Y
+     */
     ioctl(fd, UI_SET_ABSBIT, ABS_X);
     ioctl(fd, UI_SET_ABSBIT, ABS_Y);
+    ioctl(fd, UI_SET_ABSBIT, ABS_Z);
     ioctl(fd, UI_SET_ABSBIT, ABS_RX);
     ioctl(fd, UI_SET_ABSBIT, ABS_RY);
-    ioctl(fd, UI_SET_ABSBIT, ABS_Z);
     ioctl(fd, UI_SET_ABSBIT, ABS_RZ);
+    ioctl(fd, UI_SET_ABSBIT, ABS_HAT0X);
+    ioctl(fd, UI_SET_ABSBIT, ABS_HAT0Y);
 
     struct uinput_setup usetup;
     memset(&usetup, 0, sizeof(usetup));
-    usetup.id.bustype = BUS_VIRTUAL;
-    usetup.id.vendor = 0x1234;
-    usetup.id.product = 0x5678;
-    usetup.id.version = 1;
+    /*
+     * 关键：用 Xbox 360 有线手柄的真实 VID/PID。
+     * 安卓靠这对 ID 去找 /system/usr/keylayout/Vendor_045e_Product_028e.kl，
+     * 有 keylayout 才知道这是手柄、轴值怎么映射。
+     * 之前用虚构的 0x1234/0x5678，系统没有对应 keylayout，
+     * 所以轴值传进去也不认。
+     */
+    usetup.id.bustype = BUS_USB;
+    usetup.id.vendor = 0x045e;   /* Microsoft */
+    usetup.id.product = 0x028e;  /* Xbox 360 Wired Controller */
+    usetup.id.version = 0x0110;
     strncpy(usetup.name, name, UINPUT_MAX_NAME_SIZE - 1);
     usetup.name[UINPUT_MAX_NAME_SIZE - 1] = '\0';
     usetup.ff_effects_max = 0;
@@ -107,15 +124,16 @@ static int pad_init_with_fd(int fd, const char *name) {
         return -e;
     }
 
+    /* 摇杆轴：-32767 ~ 32767，flat=4096 与官方 keylayout 一致 */
     struct uinput_abs_setup abs_setup;
-    int abs_codes[6] = { ABS_X, ABS_Y, ABS_RX, ABS_RY, ABS_Z, ABS_RZ };
+    int abs_codes[6] = { ABS_X, ABS_Y, ABS_Z, ABS_RX, ABS_RY, ABS_RZ };
     for (int i = 0; i < 6; i++) {
         memset(&abs_setup, 0, sizeof(abs_setup));
         abs_setup.code = (__u16) abs_codes[i];
         abs_setup.absinfo.minimum = -32767;
         abs_setup.absinfo.maximum = 32767;
         abs_setup.absinfo.fuzz = 0;
-        abs_setup.absinfo.flat = 0;
+        abs_setup.absinfo.flat = i < 4 ? 4096 : 0;
         abs_setup.absinfo.resolution = 0;
         if (ioctl(fd, UI_ABS_SETUP, &abs_setup) < 0) {
             LOGE("UI_ABS_SETUP(%d) failed: %d", abs_codes[i], errno);

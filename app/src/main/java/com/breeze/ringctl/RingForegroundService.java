@@ -446,11 +446,13 @@ private Notification buildNotification() {
                 return;
             }
             VirtualPad.ensureReady(this);
-            float gain = Cfg.padGain(this);
-            float maxDeg = Cfg.padMaxDeg(this);
-            // 方向盘有独立的方向开关，不再跟随滚动模式的反转设置
+            // 计数 → 真实角度 → 摇杆，两步完全解耦：
+            // countsPerTurn 负责"准不准"，turnsToFull 负责"灵不灵"
+            float counts = Cfg.padCountsPerTurn(this);
+            float fullDeg = Cfg.padTurnsToFull(this) * 360f;
+            float deg = d / counts * 360f;
             boolean rev = Cfg.padReverse(this);
-            VirtualPad.turn(this, (rev ? -d : d) * gain, maxDeg);
+            VirtualPad.turn(this, rev ? -deg : deg, fullDeg);
             lastDataMs = SystemClock.elapsedRealtime();
             dbgDelta = d;
             return;

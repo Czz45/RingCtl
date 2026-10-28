@@ -93,7 +93,9 @@ public class VirtualPad {
         if (maxDeg <= 1f) maxDeg = 540f;
         // 每次转动都确保设备在（重开机 / 切 App 后可能没建）
         ensureReady(ctx);
-        float limit = ctx == null ? 1080f : Math.max(maxDeg, Cfg.padLimitDeg(ctx));
+        float limit = ctx == null
+                ? 1080f
+                : Math.max(maxDeg, Cfg.padLimitTurns(ctx) * 360f);
         angle += deltaDeg;
         if (angle > limit) {
             angle = limit;
@@ -141,7 +143,7 @@ public class VirtualPad {
                         angle += cur > 0 ? -step : step;
                         if (Math.abs(angle) < 3f) angle = 0f;
                     }
-                    startGlide(app, Cfg.padMaxDeg(app));
+                    startGlide(app, Cfg.padTurnsToFull(app) * 360f);
                 } catch (Throwable ignored) {
                 }
             }

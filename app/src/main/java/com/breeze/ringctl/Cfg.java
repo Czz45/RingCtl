@@ -174,6 +174,60 @@ public class Cfg {
         sp(c).edit().putFloat("pad_gain", v).apply();
     }
 
+    // ==================== 方向盘新模型 ====================
+    //
+    // 旧模型用「灵敏度」和「满舵角度」两个旋钮，数学上是同一个比值，
+    // 调哪个都是在改 count*gain/maxDeg，用户分不清。
+    //
+    // 新模型把两件事拆干净：
+    //   padCountsPerTurn  校准量：环转一圈到底是多少个传感器计数
+    //   padTurnsToFull    手感量：环转几圈，摇杆推到 100%
+    // 于是「满舵需要的计数 = 每圈计数 × 满舵圈数」，物理意义明确。
+    //
+    // 旧值自动迁移：
+    //   每圈计数 = 360 / 旧 gain
+    //   满舵圈数 = 旧 maxDeg / 360
+
+    /** 方向盘：环转一圈对应的传感器计数（校准值） */
+    public static float padCountsPerTurn(Context c) {
+        if (sp(c).contains("pad_counts_turn")) {
+            return sp(c).getFloat("pad_counts_turn", 1440f);
+        }
+        float g = sp(c).getFloat("pad_gain", 0.25f);
+        if (g < 0.01f) {
+            g = 0.25f;
+        }
+        return 360f / g;
+    }
+
+    public static void setPadCountsPerTurn(Context c, float v) {
+        sp(c).edit().putFloat("pad_counts_turn", v).apply();
+    }
+
+    /** 方向盘：满舵需要环转几圈 */
+    public static float padTurnsToFull(Context c) {
+        if (sp(c).contains("pad_turns_full")) {
+            return sp(c).getFloat("pad_turns_full", 1.25f);
+        }
+        return sp(c).getInt("pad_max_deg", 540) / 360f;
+    }
+
+    public static void setPadTurnsToFull(Context c, float v) {
+        sp(c).edit().putFloat("pad_turns_full", v).apply();
+    }
+
+    /** 方向盘：盘面最多能转几圈 */
+    public static float padLimitTurns(Context c) {
+        if (sp(c).contains("pad_limit_turns")) {
+            return sp(c).getFloat("pad_limit_turns", 3f);
+        }
+        return sp(c).getInt("pad_limit_deg", 1080) / 360f;
+    }
+
+    public static void setPadLimitTurns(Context c, float v) {
+        sp(c).edit().putFloat("pad_limit_turns", v).apply();
+    }
+
     /** 方向盘：真实转角上限（度）。盘可以转超过摇杆满值，最多到这里 */
     public static int padLimitDeg(Context c) {
         return sp(c).getInt("pad_limit_deg", 1080);

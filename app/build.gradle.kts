@@ -16,8 +16,8 @@ android {
         applicationId = "com.breeze.ringctl"
         minSdk = 26
         targetSdk = 36
-        versionCode = 22
-        versionName = "0.6.1"
+        versionCode = 23
+        versionName = "0.6.2"
     }
 
     signingConfigs {

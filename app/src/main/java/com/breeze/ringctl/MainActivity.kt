@@ -1528,17 +1528,21 @@ private fun String.toUri(): android.net.Uri = android.net.Uri.parse(this)
  * 实时显示当前累计角度，跟着变焦环转动。
  */
 @Composable
+@Composable
 fun SteeringWheelView(
     angleDeg: Float,
-    maxDeg: Float,
+    fullDeg: Float,
     modifier: Modifier = Modifier
 ) {
-    val safeMax = if (maxDeg < 1f) 540f else maxDeg
-    // 视觉转角按「摇杆满值 = 135°」换算，但不再预先截断角度。
-    // 转过 maxDeg 之后盘继续转，转多少就显示多少，和手感对得上。
-    val visualDeg = (angleDeg / safeMax) * 135f
-    // 摇杆推力百分比（到 100% 就不再增加，但角度还会继续累计）
-    val pushPct = ((angleDeg / safeMax) * 100f).coerceIn(-100f, 100f)
+    val safeFull = if (fullDeg < 1f) 450f else fullDeg
+    // 盘面按真实角度转：环转 360°，盘就转一整圈。
+    // 之前压缩成「满舵 = 135°」，转 900° 和转 540° 看起来一模一样，
+    // 这就是"动画对应不上角度"的原因。
+    val visualDeg = angleDeg
+    // 摇杆推力百分比，用于外圈进度弧
+    val pushFrac = (angleDeg / safeFull).coerceIn(-1f, 1f)
+    val pushPct = pushFrac * 100f
+    val turns = angleDeg / 360f
 
     Box(
         modifier = modifier.fillMaxWidth().height(220.dp),
@@ -1555,6 +1559,21 @@ fun SteeringWheelView(
                 radius = r - 4.dp.toPx(),
                 style = Stroke(width = 5.dp.toPx())
             )
+
+            // 推力进度弧：12 点为原点向两侧展开，±135° 代表摇杆满值。
+            // 盘面本身会转多圈，视觉上会自我重合，这条弧是唯一稳定的读数。
+            if (pushFrac != 0f) {
+                val pr = r - 13.dp.toPx()
+                drawArc(
+                    color = CAccent,
+                    startAngle = -90f,
+                    sweepAngle = 135f * pushFrac,
+                    useCenter = false,
+                    topLeft = Offset(cx - pr, cy - pr),
+                    size = Size(pr * 2, pr * 2),
+                    style = Stroke(width = 6.dp.toPx(), cap = StrokeCap.Round)
+                )
+            }
 
             // 正上方刻度
             val topA = -PI / 2
@@ -1628,7 +1647,7 @@ fun SteeringWheelView(
             )
             Spacer(Modifier.height(2.dp))
             Text(
-                text = "满舵 " + safeMax.toInt() + "°　推力 " + pushPct.toInt() + "%",
+                text = String.format("%.2f 圈　推力 %d%%", turns, pushPct.toInt()),
                 fontSize = 11.sp,
                 color = CMutedFg
             )
@@ -1660,9 +1679,9 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
     val ctx = activity
     BackHandler(enabled = true) { onBack() }
 
-    var maxDeg by remember { mutableIntStateOf(Cfg.padMaxDeg(ctx)) }
-    var gain by remember { mutableFloatStateOf(Cfg.padGain(ctx)) }
-    var limitDeg by remember { mutableIntStateOf(Cfg.padLimitDeg(ctx)) }
+    var turnsFull by remember { mutableFloatStateOf(Cfg.padTurnsToFull(ctx)) }
+    var limitTurns by remember { mutableFloatStateOf(Cfg.padLimitTurns(ctx)) }
+    var countsPerTurn by remember { mutableFloatStateOf(Cfg.padCountsPerTurn(ctx)) }
     var dead by remember { mutableFloatStateOf(Cfg.padDead(ctx)) }
     var rev by remember { mutableStateOf(Cfg.padReverse(ctx)) }
     var curve by remember { mutableIntStateOf(Cfg.padCurve(ctx)) }
@@ -1694,6 +1713,12 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
     var sensorOk by remember { mutableStateOf(true) }
     var liveDelta by remember { mutableFloatStateOf(0f) }
     var lastUiMs by remember { mutableLongStateOf(0L) }
+    // ---------- 一圈校准 ----------
+    var calibrating by remember { mutableStateOf(false) }
+    var calStart by remember { mutableFloatStateOf(Float.NaN) }
+    var calLast by remember { mutableFloatStateOf(0f) }
+    var calLastMs by remember { mutableLongStateOf(0L) }
+    var calResult by remember { mutableIntStateOf(0) }
     DisposableEffect(Unit) {
         RingForegroundService.padPreview = true
         val sm = ctx.getSystemService(Context.SENSOR_SERVICE) as? android.hardware.SensorManager
@@ -1711,15 +1736,22 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
                 }
                 val d = c - lastCounter
                 lastCounter = c
-                // 诊断用：每 120ms 更新一次页面上的原始 Δ，方便判断是没数据还是没输出
                 val nowMs = android.os.SystemClock.elapsedRealtime()
+                // 诊断用：每 120ms 更新一次页面上的原始 Δ，方便判断是没数据还是没输出
                 if (nowMs - lastUiMs > 120L) {
                     lastUiMs = nowMs
                     liveDelta = d
                 }
+                // 校准期间只记录计数，不驱动盘面
+                if (calibrating) {
+                    if (calStart.isNaN()) calStart = c
+                    calLast = c
+                    calLastMs = nowMs
+                    return
+                }
                 if (Math.abs(d) < dead) return
-                val step = (if (rev) -d else d) * gain
-                VirtualPad.turn(ctx, step, maxDeg.toFloat())
+                val deg = d / countsPerTurn * 360f
+                VirtualPad.turn(ctx, if (rev) -deg else deg, turnsFull * 360f)
             }
 
             override fun onAccuracyChanged(s: android.hardware.Sensor?, accuracy: Int) {}
@@ -1733,6 +1765,24 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
         onDispose {
             sm?.unregisterListener(listener)
             RingForegroundService.padPreview = false
+        }
+    }
+
+    // 校准收尾：转够幅度并且停手 1.2 秒，就把计数差记成「每圈计数」
+    LaunchedEffect(calibrating) {
+        if (!calibrating) return@LaunchedEffect
+        while (calibrating) {
+            delay(200L)
+            val now = android.os.SystemClock.elapsedRealtime()
+            val span = Math.abs(calLast - calStart)
+            if (!calStart.isNaN() && span > 200f && now - calLastMs > 1200L) {
+                val v = Math.round(span).toFloat()
+                countsPerTurn = v
+                Cfg.setPadCountsPerTurn(ctx, v)
+                calResult = v.toInt()
+                calibrating = false
+                VirtualPad.reset()
+            }
         }
     }
 
@@ -1770,7 +1820,6 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
             Spacer(Modifier.weight(1f))
             TextButton(onClick = {
                 VirtualPad.reset()
-                VirtualPad.push(ctx, maxDeg.toFloat())
             }) {
                 Text("回正", color = CAccent)
             }
@@ -1779,7 +1828,7 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
         // ---------- 方向盘本体 ----------
         SteeringWheelView(
             angleDeg = angle,
-            maxDeg = maxDeg.toFloat()
+            fullDeg = turnsFull * 360f
         )
 
         // ---------- 参数 ----------
@@ -1788,18 +1837,18 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
             SettingsCard {
                 SliderRow(
                     icon = Icons.Filled.RotateRight,
-                    title = "满舵角度",
-                    valueText = "±" + maxDeg + "°",
-                    value = maxDeg.toFloat(),
-                    range = 90f..1800f,
+                    title = "满舵圈数",
+                    valueText = String.format("%.2f 圈", turnsFull),
+                    value = turnsFull,
+                    range = 0.3f..3.0f,
                     onChange = {
-                        maxDeg = (it.toInt() / 10) * 10
-                        Cfg.setPadMaxDeg(ctx, maxDeg)
+                        turnsFull = (Math.round(it * 20f) / 20f)
+                        Cfg.setPadTurnsToFull(ctx, turnsFull)
                         VirtualPad.reset()
                     }
                 )
                 Text(
-                    "摇杆推到 100% 需要的环转角。真车一圈半约 540°，想更灵敏就调小",
+                    "环转几圈，摇杆推到 100%。真车方向盘中位到一边约 1.25 圈",
                     fontSize = 11.sp,
                     color = CMutedFg,
                     modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)
@@ -1808,34 +1857,93 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
                 SliderRow(
                     icon = Icons.Filled.Straighten,
                     title = "角度上限",
-                    valueText = "±" + limitDeg + "°",
-                    value = limitDeg.toFloat(),
-                    range = 180f..3600f,
+                    valueText = String.format("%.1f 圈", limitTurns),
+                    value = limitTurns,
+                    range = 1f..10f,
                     onChange = {
-                        limitDeg = (it.toInt() / 10) * 10
-                        Cfg.setPadLimitDeg(ctx, limitDeg)
+                        limitTurns = (Math.round(it * 10f) / 10f)
+                        Cfg.setPadLimitTurns(ctx, limitTurns)
                     }
                 )
                 Text(
-                    "盘最多能转多少度。超过满舵后会继续累计（显示真实角度），到上限才停",
+                    "盘最多转到几圈。超过满舵后推力不再涨，但角度和盘面继续累计",
                     fontSize = 11.sp,
                     color = CMutedFg,
                     modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)
                 )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            SectionLabel("传感器校准")
+            SettingsCard {
+                Row(
+                    Modifier.fillMaxWidth().padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            if (calibrating) "正在校准：把环慢慢转一整圈"
+                            else if (calResult > 0) "校准完成：每圈 $calResult 计数"
+                            else "每圈 " + countsPerTurn.toInt() + " 计数",
+                            fontSize = 15.sp,
+                            color = if (calibrating) CAccent else CForeground
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            "决定「环转一圈 = 盘转 360°」准不准。换机或换环后建议重校一次",
+                            fontSize = 12.sp,
+                            color = CMutedFg
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    SmallBtn(
+                        if (calibrating) "取消" else "校准"
+                    ) {
+                        if (calibrating) {
+                            calibrating = false
+                        } else {
+                            calStart = Float.NaN
+                            calLast = 0f
+                            calLastMs = 0L
+                            calResult = 0
+                            calibrating = true
+                        }
+                    }
+                }
+                if (calibrating) {
+                    Divider(color = CBorder.copy(alpha = 0.3f))
+                    Row(
+                        Modifier.fillMaxWidth().padding(14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            "已转 " + Math.abs(calLast - calStart).toInt() + " 计数",
+                            fontSize = 13.sp,
+                            color = CMutedFg
+                        )
+                        Text(
+                            if (Math.abs(calLast - calStart) > 200f) "停手 1.2 秒自动保存"
+                            else "慢慢转，别太快",
+                            fontSize = 12.sp,
+                            color = CMutedFg
+                        )
+                    }
+                }
                 Divider(color = CBorder.copy(alpha = 0.3f))
                 SliderRow(
-                    icon = Icons.Filled.Speed,
-                    title = "转动灵敏度",
-                    valueText = String.format("%.2f 倍", gain),
-                    value = gain,
-                    range = 0.05f..3.0f,
+                    icon = Icons.Filled.Tune,
+                    title = "每圈计数",
+                    valueText = countsPerTurn.toInt().toString(),
+                    value = countsPerTurn,
+                    range = 200f..12000f,
                     onChange = {
-                        gain = it
-                        Cfg.setPadGain(ctx, it)
+                        countsPerTurn = (it.toInt() / 10) * 10f
+                        Cfg.setPadCountsPerTurn(ctx, countsPerTurn)
                     }
                 )
                 Text(
-                    "转一格等于多少度。觉得跳就往下调，觉得转半天不动就往上调",
+                    "手动微调用。校准后一般不用再动",
                     fontSize = 11.sp,
                     color = CMutedFg,
                     modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)

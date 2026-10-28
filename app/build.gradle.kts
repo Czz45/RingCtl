@@ -4,6 +4,10 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// 固定签名：keystore 放在 app/ringctl.jks，或通过环境变量提供（GitHub Actions）
+val ksFile = file("ringctl.jks")
+val ksExists = ksFile.exists()
+
 android {
     namespace = "com.breeze.ringctl"
     compileSdk = 36
@@ -12,13 +16,32 @@ android {
         applicationId = "com.breeze.ringctl"
         minSdk = 26
         targetSdk = 36
-        versionCode = 15
-        versionName = "0.5.4"
+        versionCode = 16
+        versionName = "0.5.5"
     }
 
+    signingConfigs {
+        if (ksExists) {
+            create("fixed") {
+                storeFile = ksFile
+                storePassword = "ringctl2026"
+                keyAlias = "ringctl"
+                keyPassword = "ringctl2026"
+            }
+        }
+    }
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (ksExists) {
+                signingConfig = signingConfigs.getByName("fixed")
+            }
+        }
+        debug {
+            // debug 也用同一套签名，保证能覆盖安装
+            if (ksExists) {
+                signingConfig = signingConfigs.getByName("fixed")
+            }
         }
     }
 

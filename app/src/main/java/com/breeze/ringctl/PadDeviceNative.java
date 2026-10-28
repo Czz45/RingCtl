@@ -88,17 +88,64 @@ public final class PadDeviceNative {
 
     // ==================== 便捷封装 ====================
 
-    /** 用 root 把 /dev/uinput 权限改成 666，让本进程能打开 */
-    public static boolean fixPermissionByRoot() {
+    /** 是否已经 patch 过 SELinux（进程内只需做一次） */
+    private static boolean sSepolicyPatched = false;
+
+    /**
+     * 修复 /dev/uinput 的访问权限。
+     *
+     * 两步走：
+     *   1. chmod 666 —— 解决 DAC 权限
+     *   2. ksud sepolicy patch —— 解决 SELinux（关键）
+     *
+     * 为什么需要第 2 步：
+     *   App 的 SELinux 域是 u:r:untrusted_app_34:s0，
+     *   /dev/uinput 的标签是 u:object_r:uhid_device:s0。
+     *   即使 chmod 666（DAC 通过），SELinux 依然 denied { write }。
+     *   必须加 allow 规则，DAC 权限才有意义。
+     */
+    public static synchronized boolean fixPermissionByRoot() {
+        // 1. chmod 666
         try {
             Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", "chmod 666 /dev/uinput"});
             int code = p.waitFor();
             Log.i(TAG, "chmod 666 /dev/uinput exit=" + code);
-            return code == 0;
         } catch (Throwable t) {
             Log.w(TAG, "chmod failed: " + t);
-            return false;
         }
+
+        // 2. SELinux 规则（同一个进程只做一次）
+        if (!sSepolicyPatched) {
+            sSepolicyPatched = patchSepolicy();
+        }
+        return true;
+    }
+
+    /**
+     * 用 KernelSU 的 ksud 打 SELinux 补丁。
+     * 规则只影响内存，重启失效，所以每次 App 启动第一次用到时重打一遍。
+     */
+    private static boolean patchSepolicy() {
+        final String Q = String.valueOf((char) 34); // 双引号
+        // 覆盖三个域：基础类型 / API34 具体域 / 全部版本
+        String[] rules = {
+            "allow untrusted_app uhid_device chr_file { open read write ioctl getattr map }",
+            "allow untrusted_app_34 uhid_device chr_file { open read write ioctl getattr map }",
+            "allow untrusted_app_all uhid_device chr_file { open read write ioctl getattr map }",
+        };
+        boolean anyOk = false;
+        for (String rule : rules) {
+            try {
+                Process p = Runtime.getRuntime().exec(
+                        new String[]{"su", "-c", "ksud sepolicy patch " + Q + rule + Q});
+                int code = p.waitFor();
+                if (code == 0) anyOk = true;
+                Log.i(TAG, "ksud sepolicy patch exit=" + code + " rule=" + rule);
+            } catch (Throwable t) {
+                Log.w(TAG, "ksud patch failed: " + t);
+            }
+        }
+        return anyOk;
     }
 
     /**

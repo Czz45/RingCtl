@@ -12,8 +12,8 @@ android {
         applicationId = "com.breeze.ringctl"
         minSdk = 26
         targetSdk = 36
-        versionCode = 13
-        versionName = "0.5.2"
+        versionCode = 14
+        versionName = "0.5.3"
     }
 
     buildTypes {

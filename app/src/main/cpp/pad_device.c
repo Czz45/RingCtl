@@ -133,7 +133,12 @@ static int pad_init_with_fd(int fd, const char *name) {
         abs_setup.absinfo.minimum = -32767;
         abs_setup.absinfo.maximum = 32767;
         abs_setup.absinfo.fuzz = 0;
-        abs_setup.absinfo.flat = i < 4 ? 4096 : 0;
+        /*
+         * flat = 死区。keylayout 里写 4096 是为了兼容真实手柄的抖动，
+         * 但我们发的是精确值，不需要那么大死区（4096/32767 = 12.5%）。
+         * 改成 0，摇杆从中心一动就有反应，消除虚位。
+         */
+        abs_setup.absinfo.flat = 0;
         abs_setup.absinfo.resolution = 0;
         if (ioctl(fd, UI_ABS_SETUP, &abs_setup) < 0) {
             LOGE("UI_ABS_SETUP(%d) failed: %d", abs_codes[i], errno);

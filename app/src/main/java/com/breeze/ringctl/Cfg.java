@@ -158,7 +158,7 @@ public class Cfg {
 
     /** 方向盘：最大转角（度），左右各这么多 */
     public static int padMaxDeg(Context c) {
-        return sp(c).getInt("pad_max_deg", 450);
+        return sp(c).getInt("pad_max_deg", 540);
     }
 
     public static void setPadMaxDeg(Context c, int v) {
@@ -167,7 +167,7 @@ public class Cfg {
 
     /** 方向盘：转动灵敏度（1 个传感器单位 = 多少度） */
     public static float padGain(Context c) {
-        return sp(c).getFloat("pad_gain", 1.0f);
+        return sp(c).getFloat("pad_gain", 0.25f);
     }
 
     public static void setPadGain(Context c, float v) {

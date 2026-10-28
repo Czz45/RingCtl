@@ -51,8 +51,11 @@ public class VirtualPad {
     }
 
     public static void reset() {
-        angle = 0f;
-        lastSent = Integer.MIN_VALUE;
+        synchronized (VirtualPad.class) {
+            angle = 0f;
+            shownAngle = 0f;
+            lastSent = Integer.MIN_VALUE;
+        }
     }
 
     public static float getAngle() {
@@ -66,14 +69,93 @@ public class VirtualPad {
      * @param maxDeg   最大转角
      */
     public static synchronized boolean turn(Context ctx, float deltaDeg, float maxDeg) {
-        if (maxDeg <= 1f) maxDeg = 450f;
+        if (maxDeg <= 1f) maxDeg = 540f;
         angle += deltaDeg;
         if (angle > maxDeg) {
             angle = maxDeg;
         } else if (angle < -maxDeg) {
             angle = -maxDeg;
         }
-        return push(ctx, maxDeg);
+        // 目标值变化了，启动插值追赶
+        startGlide(ctx, maxDeg);
+        return true;
+    }
+
+    // ==================== 插值（消除跳跃感） ====================
+    //
+    // 问题：传感器一帧就跳 ±70~160，直接映射成摇杆值就是「跳一大格」。
+    // 做法：不直接发目标值，而是每 8ms 走一小步，在 ~60ms 内追平。
+    // 这样一帧的跳跃被摊成 7~8 个中间值，看起来是平滑滑动。
+
+    private static float shownAngle = 0f;   // 当前已发出的角度
+    private static Thread glideThread = null;
+    private static volatile boolean glideRunning = false;
+
+    /** 启动（或唤醒）插值线程 */
+    private static void startGlide(Context ctx, float maxDeg) {
+        if (glideRunning) return;   // 线程已在跑，它会自己追
+        glideRunning = true;
+        final Context c = ctx;
+        final float md = maxDeg;
+        Thread t = new Thread(() -> {
+            try {
+                while (true) {
+                    float target;
+                    synchronized (VirtualPad.class) {
+                        target = angle;
+                    }
+                    float cur = shownAngle;
+                    float diff = target - cur;
+
+                    if (Math.abs(diff) < 0.5f) {
+                        // 追平了，退出
+                        if (diff != 0f) {
+                            shownAngle = target;
+                            emitValue(c, target, md);
+                        }
+                        break;
+                    }
+
+                    // 每步走剩余差值的 35%，最少 1 度，避免拖很久
+                    float step = diff * 0.35f;
+                    if (Math.abs(step) < 1f) step = diff > 0 ? 1f : -1f;
+                    shownAngle = cur + step;
+                    emitValue(c, shownAngle, md);
+
+                    try {
+                        Thread.sleep(8);
+                    } catch (InterruptedException e) {
+                        break;
+                    }
+                }
+            } catch (Throwable ignored) {
+            } finally {
+                synchronized (VirtualPad.class) {
+                    glideRunning = false;
+                }
+            }
+        });
+        t.setDaemon(true);
+        t.setName("PadGlide");
+        t.start();
+    }
+
+    /** 把某个角度值发出去 */
+    private static void emitValue(Context ctx, float ang, float maxDeg) {
+        if (maxDeg <= 1f) maxDeg = 540f;
+        int v = Math.round(ang / maxDeg * 32000f);
+        if (v > 32000) {
+            v = 32000;
+        } else if (v < -32000) {
+            v = -32000;
+        }
+        if (v == lastSent) return;
+        if (sendNative(v)) {
+            lastSent = v;
+            return;
+        }
+        sendBroadcast(ctx, v);
+        lastSent = v;
     }
 
     /** 输出当前角度 */

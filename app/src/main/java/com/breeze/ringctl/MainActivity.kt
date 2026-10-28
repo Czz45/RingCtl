@@ -653,7 +653,7 @@ fun SettingsTab(activity: ComponentActivity, s: RingStateHolder, onShowAbout: ()
                         title = "转动灵敏度",
                         valueText = String.format("%.1f 倍", s.padGain),
                         value = s.padGain,
-                        range = 0.2f..10.0f,
+                        range = 0.05f..3.0f,
                         onChange = {
                             s.padGain = it
                             Cfg.setPadGain(ctx, it)

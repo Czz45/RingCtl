@@ -1528,7 +1528,6 @@ private fun String.toUri(): android.net.Uri = android.net.Uri.parse(this)
  * 实时显示当前累计角度，跟着变焦环转动。
  */
 @Composable
-@Composable
 fun SteeringWheelView(
     angleDeg: Float,
     fullDeg: Float,

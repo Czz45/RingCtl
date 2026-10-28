@@ -172,6 +172,37 @@ fun MainShell(activity: ComponentActivity) {
     var newVersionUrl by remember { mutableStateOf(UpdateChecker.URL_RELEASES) }
     var newVersionLog by remember { mutableStateOf("") }
     var showUpdateDialog by remember { mutableStateOf(false) }
+    // 内置下载器状态：0 未开始 / 1 下载中 / 2 已完成 / 3 失败
+    var dlState by remember { mutableIntStateOf(0) }
+    var dlPct by remember { mutableIntStateOf(-1) }
+    var dlErr by remember { mutableStateOf("") }
+
+    fun startDownload() {
+        dlState = 1
+        dlPct = -1
+        dlErr = ""
+        ApkDownloader.download(
+            activity, newVersionUrl, newVersion ?: "latest",
+            object : ApkDownloader.Callback {
+                override fun onProgress(percent: Int, done: Long, total: Long) {
+                    dlPct = percent
+                }
+
+                override fun onDone(apk: java.io.File) {
+                    dlState = 2
+                    if (ApkDownloader.install(activity, apk)) {
+                        showUpdateDialog = false
+                    } else {
+                        dlErr = "请在系统设置里允许「安装未知应用」后回来重试"
+                    }
+                }
+
+                override fun onFail(reason: String) {
+                    dlState = 3
+                    dlErr = reason
+                }
+            })
+    }
 
     LaunchedEffect(Unit) {
         UpdateChecker.check(activity, object : UpdateChecker.Callback {
@@ -233,19 +264,62 @@ fun MainShell(activity: ComponentActivity) {
                             )
                         }
                     }
+                    if (dlState == 1) {
+                        Spacer(Modifier.height(14.dp))
+                        LinearProgressIndicator(
+                            progress = { if (dlPct < 0) 0f else dlPct / 100f },
+                            modifier = Modifier.fillMaxWidth().height(6.dp),
+                            color = CAccent,
+                            trackColor = CMuted
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            if (dlPct < 0) "正在连接…" else "下载中 $dlPct%",
+                            fontSize = 12.sp,
+                            color = CMutedFg
+                        )
+                    } else if (dlErr.isNotBlank()) {
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            "下载失败：$dlErr",
+                            fontSize = 12.sp,
+                            color = CDestructive
+                        )
+                    }
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    UpdateChecker.openUrl(activity, newVersionUrl)
-                    showUpdateDialog = false
-                }) {
-                    Text("去更新", color = CAccent)
+                if (dlState == 1) {
+                    TextButton(onClick = {}, enabled = false) {
+                        Text(
+                            if (dlPct < 0) "下载中…" else "$dlPct%",
+                            color = CMutedFg
+                        )
+                    }
+                } else {
+                    TextButton(onClick = { startDownload() }) {
+                        Text(
+                            when (dlState) {
+                                2 -> "重新安装"
+                                3 -> "重试下载"
+                                else -> "下载并安装"
+                            },
+                            color = CAccent
+                        )
+                    }
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showUpdateDialog = false }) {
-                    Text("忽略", color = CMutedFg)
+                Row {
+                    TextButton(onClick = {
+                        UpdateChecker.openUrl(activity, newVersionUrl)
+                        showUpdateDialog = false
+                    }) {
+                        Text("浏览器", color = CMutedFg)
+                    }
+                    TextButton(onClick = { showUpdateDialog = false }) {
+                        Text("忽略", color = CMutedFg)
+                    }
                 }
             }
         )
@@ -1693,6 +1767,7 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
     var autoCenter by remember { mutableStateOf(Cfg.padAutoCenter(ctx)) }
     var hapticCenter by remember { mutableStateOf(Cfg.padHapticCenter(ctx)) }
     var hapticEdge by remember { mutableStateOf(Cfg.padHapticEdge(ctx)) }
+    var hapticZero by remember { mutableStateOf(Cfg.padHapticZero(ctx)) }
     var centerDelay by remember { mutableIntStateOf(Cfg.padCenterDelayMs(ctx)) }
     var centerWindow by remember { mutableIntStateOf(Cfg.padCenterWindow(ctx)) }
     var centerSpeed by remember { mutableIntStateOf(Cfg.padCenterSpeed(ctx)) }
@@ -2154,6 +2229,16 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
                 ) {
                     hapticEdge = it
                     Cfg.setPadHapticEdge(ctx, it)
+                }
+                Divider(color = CBorder.copy(alpha = 0.3f))
+                SwitchRow(
+                    icon = Icons.Filled.Vibration,
+                    title = "过中位震动",
+                    subtitle = "从一边转到另一边经过中心时轻震，盲操作也能找准中位",
+                    checked = hapticZero
+                ) {
+                    hapticZero = it
+                    Cfg.setPadHapticZero(ctx, it)
                 }
             }
 

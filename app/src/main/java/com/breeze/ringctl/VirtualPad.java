@@ -116,6 +116,14 @@ public class VirtualPad {
                 && Cfg.padHapticEdge(ctx)) {
             haptic(ctx, true);
         }
+        // 穿过中心点：从一边转到另一边，经过 0 时轻震，方便盲操作找中位。
+        // 要求起点离中心有点距离，否则在 0 附近的小抖动会一直响。
+        if (ctx != null
+                && Math.abs(before) > 0.5f
+                && ((before > 0f && angle <= 0f) || (before < 0f && angle >= 0f))
+                && Cfg.padHapticZero(ctx)) {
+            haptic(ctx, false);
+        }
         // 目标值变化了，启动插值追赶
         startGlide(ctx, maxDeg);
         // 首次转动时把自动回正的守护线程拉起来（未开启则空转，开销可忽略）

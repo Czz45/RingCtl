@@ -329,6 +329,15 @@ public class Cfg {
         sp(c).edit().putBoolean("pad_haptic_edge", v).apply();
     }
 
+    /** 方向盘：穿过中心点时震动 */
+    public static boolean padHapticZero(Context c) {
+        return sp(c).getBoolean("pad_haptic_zero", true);
+    }
+
+    public static void setPadHapticZero(Context c, boolean v) {
+        sp(c).edit().putBoolean("pad_haptic_zero", v).apply();
+    }
+
     /** 方向盘：归中范围（度）。只有转到这个范围内才会被慢慢吸回中心 */
     public static int padCenterWindow(Context c) {
         return sp(c).getInt("pad_center_window", 90);

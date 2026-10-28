@@ -196,9 +196,19 @@ public class VirtualPad {
      *
      * 这样 125Hz 和 1000Hz 走的是同一条曲线，只是采样点更密。
      */
+    /** 当前「目标角度」与「已发出角度」的差值 */
+    private static float gapToTarget() {
+        synchronized (VirtualPad.class) {
+            return angle - shownAngle;
+        }
+    }
+
     private static void startGlide(Context ctx, float maxDeg) {
         if (glideRunning) return;   // 线程已在跑，它会自己追
         glideRunning = true;
+        // 注：线程现在会常驻（空闲时低频率轮询），不再追平即退出。
+        // 之前「追平就 break」导致中位附近每帧都在新建线程，
+        // 创建开销表现为明显卡顿。
         final Context c = ctx;
         final float md = maxDeg;
         Thread t = new Thread(() -> {
@@ -250,14 +260,23 @@ public class VirtualPad {
                     float diff = target - cur;
 
                     if (Math.abs(diff) < 0.2f) {
-                        // 追平了
+                        // 追平了：把最后一点补齐，但不退出线程。
+                        // 常驻线程避免了「追平→退出→下一帧重建」的抖动，
+                        // 中位和边缘这种长期静止的状态不再卡顿。
                         if (diff != 0f) {
                             shownAngle = target;
                             emitValue(c, target, md);
                         }
-                        // 还在归中的话不能退出，否则归中会停在半路
-                        if (!centering) {
-                            break;
+                        // 完全静止且不在归中：低频空转，几乎不吃 CPU
+                        if (!centering && Math.abs(gapToTarget()) < 0.2f) {
+                            try {
+                                Thread.sleep(4L);
+                            } catch (InterruptedException e) {
+                                break;
+                            }
+                            prev = System.nanoTime();
+                            next = prev;
+                            continue;
                         }
                     }
 
@@ -309,6 +328,7 @@ public class VirtualPad {
                 synchronized (VirtualPad.class) {
                     gap = Math.abs(angle - shownAngle);
                 }
+                // 常驻线程平时不会走到这里；只有异常退出才需要重启
                 if (gap >= 0.2f || centerActive(c)) {
                     startGlide(c, md);
                 }

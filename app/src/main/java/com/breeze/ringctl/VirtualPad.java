@@ -70,6 +70,8 @@ public class VirtualPad {
      */
     public static synchronized boolean turn(Context ctx, float deltaDeg, float maxDeg) {
         if (maxDeg <= 1f) maxDeg = 540f;
+        // 每次转动都确保设备在（重开机 / 切 App 后可能没建）
+        ensureReady(ctx);
         angle += deltaDeg;
         if (angle > maxDeg) {
             angle = maxDeg;
@@ -137,6 +139,38 @@ public class VirtualPad {
         });
         t.setDaemon(true);
         t.setName("PadGlide");
+        t.start();
+    }
+
+    private static volatile boolean sEnsuring = false;
+    private static long sLastEnsureMs = 0L;
+    private static final long ENSURE_INTERVAL_MS = 2000L;
+
+    /**
+     * 确保虚拟手柄已创建。
+     *
+     * 之前依赖 UI 上点「重试」或切模式时预热，导致：
+     *   - App 重启后已处于方向盘模式，设备不会自动建
+     *   - 每个 App 单独设成方向盘模式时，也不会自动建
+     * 现在改成在每次转动时检查并异步创建。
+     */
+    public static void ensureReady(Context ctx) {
+        if (PadDeviceNative.nativeIsReadySafe()) return;
+        long now = System.currentTimeMillis();
+        if (sEnsuring) return;
+        if (now - sLastEnsureMs < ENSURE_INTERVAL_MS) return;
+        sEnsuring = true;
+        sLastEnsureMs = now;
+        Thread t = new Thread(() -> {
+            try {
+                PadDeviceNative.ensureCreated();
+            } catch (Throwable ignored) {
+            } finally {
+                sEnsuring = false;
+            }
+        });
+        t.setDaemon(true);
+        t.setName("PadEnsure");
         t.start();
     }
 

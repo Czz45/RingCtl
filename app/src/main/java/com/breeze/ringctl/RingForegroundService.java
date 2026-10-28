@@ -465,6 +465,8 @@ float d = counter - lastCounter;
         // ===== 方向盘模式：把转动变成摇杆角度，直接发出去 =====
         // ===== 方向盘模式：转成摇杆值，发广播给 RingHook 注入 =====
         if (pMode() == Cfg.MODE_WHEEL_PAD) {
+            // 确保手柄存在（切 App / 重启后可能还没建）
+            VirtualPad.ensureReady(this);
             float gain = Cfg.padGain(this);
             float maxDeg = Cfg.padMaxDeg(this);
             float deg = signedD * gain;

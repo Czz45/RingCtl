@@ -667,6 +667,13 @@ fun SettingsTab(activity: ComponentActivity, s: RingStateHolder, onShowAbout: ()
                     )
                     Divider(color = CBorder.copy(alpha = 0.3f))
                     var statusKey by remember { mutableIntStateOf(0) }
+                    // 每秒刷新一次状态，自动创建设备后能自己变绿
+                    LaunchedEffect(Unit) {
+                        while (true) {
+                            delay(1000)
+                            statusKey++
+                        }
+                    }
                     val status = remember(statusKey) { VirtualPad.statusText() }
                     val lastErr = remember(statusKey) { PadDeviceNative.getLastError() }
                     Row(

@@ -1625,13 +1625,13 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
 
     var maxDeg by remember { mutableIntStateOf(Cfg.padMaxDeg(ctx)) }
     var gain by remember { mutableFloatStateOf(Cfg.padGain(ctx)) }
-    var angle by remember { mutableFloatStateOf(VirtualPad.getAngle()) }
+    var angle by remember { mutableFloatStateOf(VirtualPad.getShownAngle()) }
     var statusKey by remember { mutableIntStateOf(0) }
 
-    // 实时读取方向盘的累计角度（与发给手柄的值同步）
+    // 实时读取方向盘的实际输出角度（插值后的值，转动更顺滑）
     LaunchedEffect(Unit) {
         while (true) {
-            angle = VirtualPad.getAngle()
+            angle = VirtualPad.getShownAngle()
             delay(16)
         }
     }
@@ -1642,6 +1642,16 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
             delay(500)
             statusKey++
         }
+    }
+
+    // 进页面开启预览：让本 App 自己也能收到变焦环数据
+    // 顺带确保控制服务在跑（服务停了就没有传感器回调，方向盘必然不动）
+    DisposableEffect(Unit) {
+        RingForegroundService.padPreview = true
+        if (!RingForegroundService.running) {
+            RingForegroundService.start(ctx)
+        }
+        onDispose { RingForegroundService.padPreview = false }
     }
 
     // 进页就确保手柄存在

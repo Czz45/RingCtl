@@ -46,6 +46,15 @@ public class RingForegroundService extends Service implements SensorEventListene
     private static final int MAX_INFLIGHT = 2;
 
     public static volatile boolean running = false;
+    /**
+     * 方向盘预览开关。
+     *
+     * 打开方向盘页面时置 true，离开置 false。
+     * 作用有两个：
+     *   1. 让「自己这个 App」也能收到变焦环数据（否则页面上的方向盘永远不动）
+     *   2. 强制走方向盘分支，不受当前全局模式 / 冷却时间影响
+     */
+    public static volatile boolean padPreview = false;
     public static volatile String lastState = "未启动";
     public static volatile float dbgDelta = 0f;
     public static volatile float dbgPending = 0f;
@@ -319,6 +328,10 @@ private Notification buildNotification() {
     private boolean isActiveForCurrentApp() {
         // 优先 UsageStats（不受输入法/悬浮窗干扰），失败退回无障碍
         String pkg = ForegroundApp.get(this);
+        // 方向盘预览：只有本 App 在前台时才放行，避免离开页面后误触发
+        if (padPreviewActive()) {
+            return true;
+        }
         if (ForegroundApp.isIgnorable(pkg)) {
             return false;
         }
@@ -342,6 +355,15 @@ private Notification buildNotification() {
 
     private int pMode() {
         return AppCfg.intOf(this, fgPkg(), "mode", Cfg.mode(this));
+    }
+
+    /** 是否正在方向盘页面里做预览（页面打开 + 本 App 在前台） */
+    private boolean padPreviewActive() {
+        if (!padPreview) {
+            return false;
+        }
+        String p = fgPkg();
+        return p != null && p.equals(getPackageName());
     }
 
     private int pAxis() {
@@ -407,7 +429,8 @@ private Notification buildNotification() {
         if (!running || !isActiveForCurrentApp()) {
             return;
         }
-        if (SystemClock.elapsedRealtime() < cooldownUntilMs) {
+        // 预览模式跳过冷却：方向盘不需要节流
+        if (!padPreviewActive() && SystemClock.elapsedRealtime() < cooldownUntilMs) {
             return;
         }
         float[] v = e.values;
@@ -421,8 +444,25 @@ private Notification buildNotification() {
             return;
         }
 
-float d = counter - lastCounter;
+        float d = counter - lastCounter;
         lastCounter = counter;
+
+        // ===== 方向盘：把转动变成摇杆角度，直接发出去 =====
+        // 放在防抖/死区之前，页面上的方向盘要能跟手，不能被滚动模式的
+        // 方向确认帧拖慢；同时不受冷却时间影响。
+        if (padPreviewActive() || pMode() == Cfg.MODE_WHEEL_PAD) {
+            if (Math.abs(d) < 1f) {
+                return;
+            }
+            VirtualPad.ensureReady(this);
+            float gain = Cfg.padGain(this);
+            float maxDeg = Cfg.padMaxDeg(this);
+            boolean rev = Cfg.reverse(this);
+            VirtualPad.turn(this, (rev ? -d : d) * gain, maxDeg);
+            lastDataMs = SystemClock.elapsedRealtime();
+            dbgDelta = d;
+            return;
+        }
 
         if (Math.abs(d) < pDead()) {
             return;
@@ -461,19 +501,6 @@ float d = counter - lastCounter;
 
         boolean reverse = Cfg.reverse(this);
         float signedD = reverse ? -d : d;
-
-        // ===== 方向盘模式：把转动变成摇杆角度，直接发出去 =====
-        // ===== 方向盘模式：转成摇杆值，发广播给 RingHook 注入 =====
-        if (pMode() == Cfg.MODE_WHEEL_PAD) {
-            // 确保手柄存在（切 App / 重启后可能还没建）
-            VirtualPad.ensureReady(this);
-            float gain = Cfg.padGain(this);
-            float maxDeg = Cfg.padMaxDeg(this);
-            float deg = signedD * gain;
-            VirtualPad.turn(this, deg, maxDeg);
-            lastDataMs = SystemClock.elapsedRealtime();
-            return;
-        }
 
         // 固定方向：不管正转反转，只按选定的方向输出
         if (pFixedDir()) {

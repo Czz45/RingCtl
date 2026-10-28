@@ -56,10 +56,26 @@ public class VirtualPad {
             shownAngle = 0f;
             lastSent = Integer.MIN_VALUE;
         }
+        // 光改内部变量不够，系统里的摇杆还停在上次的值，必须真发一次 0
+        try {
+            if (PadDeviceNative.nativeIsReadySafe()) {
+                PadDeviceNative.move(0, 0);
+                lastSent = 0;
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     public static float getAngle() {
         return angle;
+    }
+
+    /**
+     * 当前实际发出去的角度（插值后的中间值）。
+     * UI 显示用这个，比目标值更贴近真实输出，转动过程不会一跳一跳。
+     */
+    public static float getShownAngle() {
+        return shownAngle;
     }
 
     /**

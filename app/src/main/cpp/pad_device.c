@@ -1,13 +1,12 @@
 /*
  * pad_device.c —— RingCtl 虚拟手柄（uinput 常驻）
  *
- * 在 system_server 进程内直接持有 /dev/uinput 的 fd，
- * 创建一次虚拟手柄后常驻，后续只写 ABS_X 事件即可，
- * 延迟 ≈ 单次 write syscall（< 1ms），不再需要每次重建。
+ * 关键设计：
+ *   App 进程是普通用户（u0_axxx），没有 /dev/uinput 的权限。
+ *   但 App 有 root，可以先 `su -c chmod` 或用 root 打开设备，
+ *   然后把 fd 通过 JNI 传进来，native 层用这个 fd 完成后续所有操作。
  *
- * 关键点：
- *  - 必须用 UI_DEV_SETUP 传结构体（纯 Java 做不到，所以用 native）
- *  - 不设置 INPUT_PROP_POINTER（手柄不是指针设备）
+ *   一旦 fd 到手，写事件就是普通 write，不需要再 su，延迟 < 1ms。
  */
 
 #include <jni.h>
@@ -49,16 +48,19 @@ static void emit_syn(int fd) {
     write(fd, &ev, sizeof(ev));
 }
 
-static int pad_create(const char *name) {
+/*
+ * 用指定的 fd 初始化虚拟手柄。
+ * fd 由 Java 层通过 root 提前打开并传进来。
+ * 返回 0 成功，负值失败。
+ */
+static int pad_init_with_fd(int fd, const char *name) {
+    if (fd < 0) {
+        LOGE("invalid fd: %d", fd);
+        return -EBADF;
+    }
     if (g_fd >= 0) {
         LOGI("device already created, fd=%d", g_fd);
         return 0;
-    }
-
-    int fd = open("/dev/uinput", O_WRONLY | O_NONBLOCK);
-    if (fd < 0) {
-        LOGE("open /dev/uinput failed: %d (%s)", errno, strerror(errno));
-        return -errno;
     }
 
     ioctl(fd, UI_SET_EVBIT, EV_KEY);
@@ -100,9 +102,9 @@ static int pad_create(const char *name) {
     usetup.ff_effects_max = 0;
 
     if (ioctl(fd, UI_DEV_SETUP, &usetup) < 0) {
-        LOGE("UI_DEV_SETUP failed: %d (%s)", errno, strerror(errno));
-        close(fd);
-        return -errno;
+        int e = errno;
+        LOGE("UI_DEV_SETUP failed: %d (%s)", e, strerror(e));
+        return -e;
     }
 
     struct uinput_abs_setup abs_setup;
@@ -121,9 +123,9 @@ static int pad_create(const char *name) {
     }
 
     if (ioctl(fd, UI_DEV_CREATE) < 0) {
-        LOGE("UI_DEV_CREATE failed: %d (%s)", errno, strerror(errno));
-        close(fd);
-        return -errno;
+        int e = errno;
+        LOGE("UI_DEV_CREATE failed: %d (%s)", e, strerror(e));
+        return -e;
     }
 
     g_fd = fd;
@@ -171,17 +173,20 @@ static void pad_destroy(void) {
 
 /* ==================== JNI ==================== */
 
+/*
+ * 新增：用外部传入的 fd 创建设备。
+ * Java 层通过 root 打开 /dev/uinput 得到 fd，
+ * 用 ParcelFileDescriptor.detachFd() 取出原始 fd 传进来。
+ */
 JNIEXPORT jint JNICALL
-Java_com_breeze_ringctl_PadDeviceNative_nativeCreate(JNIEnv *env, jobject thiz, jstring jname) {
+Java_com_breeze_ringctl_PadDeviceNative_nativeInitWithFd(JNIEnv *env, jobject thiz, jint fd, jstring jname) {
     const char *name = "RingCtlPad";
     if (jname != NULL) {
         const char *tmp = (*env)->GetStringUTFChars(env, jname, NULL);
-        if (tmp != NULL) {
-            name = tmp;
-        }
+        if (tmp != NULL) name = tmp;
     }
-    int r = pad_create(name);
-    if (jname != NULL && name != NULL) {
+    int r = pad_init_with_fd((int) fd, name);
+    if (jname != NULL) {
         (*env)->ReleaseStringUTFChars(env, jname, name);
     }
     return r;
@@ -202,6 +207,38 @@ Java_com_breeze_ringctl_PadDeviceNative_nativeIsReady(JNIEnv *env, jobject thiz)
     return g_fd >= 0 ? JNI_TRUE : JNI_FALSE;
 }
 
+/*
+ * 本进程自己打开 /dev/uinput 并初始化。
+ * 前提：已用 root 把设备权限改成 666。
+ * fd 归本进程所有，后续写事件不需要任何权限检查。
+ */
+JNIEXPORT jint JNICALL
+Java_com_breeze_ringctl_PadDeviceNative_nativeOpenAndInit(JNIEnv *env, jobject thiz, jstring jname) {
+    if (g_fd >= 0) return 0;
+
+    int fd = open("/dev/uinput", O_WRONLY | O_NONBLOCK);
+    if (fd < 0) {
+        int e = errno;
+        LOGE("open /dev/uinput failed: %d (%s)", e, strerror(e));
+        return -e;
+    }
+
+    const char *name = "RingCtlPad";
+    if (jname != NULL) {
+        const char *tmp = (*env)->GetStringUTFChars(env, jname, NULL);
+        if (tmp != NULL) name = tmp;
+    }
+    int r = pad_init_with_fd(fd, name);
+    if (jname != NULL) {
+        (*env)->ReleaseStringUTFChars(env, jname, name);
+    }
+    if (r != 0) {
+        close(fd);
+    }
+    return r;
+}
+
+/* 探测当前进程能否直接打开 /dev/uinput（普通 App 通常为 false） */
 JNIEXPORT jboolean JNICALL
 Java_com_breeze_ringctl_PadDeviceNative_nativeCanOpen(JNIEnv *env, jobject thiz) {
     int fd = open("/dev/uinput", O_WRONLY | O_NONBLOCK);

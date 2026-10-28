@@ -600,13 +600,26 @@ fun SettingsTab(activity: ComponentActivity, s: RingStateHolder, onShowAbout: ()
                     Divider(color = CBorder.copy(alpha = 0.3f))
                     ModeRow(
                         Icons.Filled.SportsMotorsports,
-                        "方向盘（虚拟手柄）",
-                        "延迟较高（约 200ms~1s），不建议日常使用",
+                        "方向盘（原生注入）",
+                        "进程内常驻虚拟手柄，写 ABS_X，延迟接近传感器刷新",
                         s.mode == Cfg.MODE_WHEEL_PAD
                     ) {
                         s.mode = Cfg.MODE_WHEEL_PAD
                         Cfg.setMode(ctx, s.mode)
                         VirtualPad.reset()
+                        // 进入方向盘模式时预热：提前建好手柄，避免第一次转动才建
+                        try {
+                            PadDeviceNative.load()
+                            val t = Thread {
+                                try {
+                                    PadDeviceNative.ensureCreated()
+                                } catch (e: Throwable) {
+                                }
+                            }
+                            t.isDaemon = true
+                            t.start()
+                        } catch (e: Throwable) {
+                        }
                     }
                 }
             }
@@ -653,6 +666,9 @@ fun SettingsTab(activity: ComponentActivity, s: RingStateHolder, onShowAbout: ()
                         modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)
                     )
                     Divider(color = CBorder.copy(alpha = 0.3f))
+                    var statusKey by remember { mutableIntStateOf(0) }
+                    val status = remember(statusKey) { VirtualPad.statusText() }
+                    val lastErr = remember(statusKey) { PadDeviceNative.getLastError() }
                     Row(
                         Modifier.fillMaxWidth().padding(14.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -661,10 +677,29 @@ fun SettingsTab(activity: ComponentActivity, s: RingStateHolder, onShowAbout: ()
                             Text("手柄状态", fontSize = 15.sp, color = CForeground)
                             Spacer(Modifier.height(3.dp))
                             Text(
-                                VirtualPad.statusText(),
+                                status,
                                 fontSize = 12.sp,
-                                color = CMutedFg
+                                color = if (status == "手柄已创建") CAccent else CMutedFg
                             )
+                            if (lastErr != "无") {
+                                Spacer(Modifier.height(3.dp))
+                                Text(
+                                    "错误: " + lastErr,
+                                    fontSize = 11.sp,
+                                    color = CMutedFg
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        SmallBtn("重试") {
+                            Thread {
+                                try {
+                                    PadDeviceNative.reset()
+                                    PadDeviceNative.ensureCreated()
+                                } catch (e: Throwable) {
+                                }
+                            }.start()
+                            statusKey++
                         }
                     }
                 }

@@ -75,3 +75,23 @@ App 覆盖只影响该 App 在前台时的实际输出。
 - 发版必须 **推 main + 推 tag**，只推 main 不会出 Release
 - git push 偶发连不上 443，可用 API 打 tag：
   `POST /repos/Czz45/RingCtl/git/refs {"ref":"refs/tags/vX.Y.Z","sha":"<main sha>"}`
+
+---
+
+## 4. 视频进度精确 seek
+
+现在手势里的「快进/快退」用媒体键（`KEYCODE_MEDIA_FAST_FORWARD`），
+跳跃秒数由播放器决定（多数 10s，部分 3s，部分要长按才连续）。
+要精确 seek 需要接 `MediaSession`，前提是用户授予「通知使用权」
+（`NotificationListenerService`），代价是多一个授权步骤。
+
+## 5. 手势表扩展
+
+当前只有一个手势（来回扭转），`TwistDetector` 已经是可复用组件。
+后续可以加：
+
+- 快速转到底（一次大幅快速转动）
+- 慢转三圈（长时间连续同向）
+- 双向各一次长扭（类似双击）
+
+每个手势绑一个 `LaunchActions` 动作。

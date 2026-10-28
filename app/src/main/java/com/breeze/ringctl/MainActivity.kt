@@ -1685,6 +1685,11 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
     var rev by remember { mutableStateOf(Cfg.padReverse(ctx)) }
     var curve by remember { mutableIntStateOf(Cfg.padCurve(ctx)) }
     var smooth by remember { mutableFloatStateOf(Cfg.padSmooth(ctx)) }
+    val hzSteps = remember { intArrayOf(125, 250, 500, 1000) }
+    var hz by remember { mutableIntStateOf(Cfg.padHz(ctx)) }
+    var hzIdx by remember {
+        mutableIntStateOf(hzSteps.indexOf(hz).let { if (it < 0) 1 else it })
+    }
     var autoCenter by remember { mutableStateOf(Cfg.padAutoCenter(ctx)) }
     var centerDelay by remember { mutableIntStateOf(Cfg.padCenterDelayMs(ctx)) }
     var centerWindow by remember { mutableIntStateOf(Cfg.padCenterWindow(ctx)) }
@@ -1713,7 +1718,6 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
     // 都不影响这里。服务侧看到 padPreview 会主动让路，避免角度重复累加。
     var sensorOk by remember { mutableStateOf(true) }
     var liveDelta by remember { mutableFloatStateOf(0f) }
-    var lastUiMs by remember { mutableLongStateOf(0L) }
     // ---------- 一圈校准 ----------
     var calibrating by remember { mutableStateOf(false) }
     var calStart by remember { mutableFloatStateOf(Float.NaN) }
@@ -1722,6 +1726,13 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
     var calResult by remember { mutableIntStateOf(0) }
     DisposableEffect(Unit) {
         RingForegroundService.padPreview = true
+        // 传感器回调放到独立线程：
+        // 注册在主线程时，页面每帧重组 + Canvas 绘制都会推迟回调，
+        // 表现出来就是「转着转着顿一下」。独立线程后不受 UI 影响。
+        val sensorThread = android.os.HandlerThread("RingSensor").apply { start() }
+        val sensorHandler = android.os.Handler(sensorThread.looper)
+        val uiHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        var lastUiLocal = 0L
         val sm = ctx.getSystemService(Context.SENSOR_SERVICE) as? android.hardware.SensorManager
         val sensor = sm?.let { findRingSensor(it) }
         sensorOk = sensor != null
@@ -1739,15 +1750,18 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
                 lastCounter = c
                 val nowMs = android.os.SystemClock.elapsedRealtime()
                 // 诊断用：每 120ms 更新一次页面上的原始 Δ，方便判断是没数据还是没输出
-                if (nowMs - lastUiMs > 120L) {
-                    lastUiMs = nowMs
-                    liveDelta = d
+                if (nowMs - lastUiLocal > 120L) {
+                    lastUiLocal = nowMs
+                    val dv = d
+                    uiHandler.post { liveDelta = dv }
                 }
                 // 校准期间只记录计数，不驱动盘面
                 if (calibrating) {
-                    if (calStart.isNaN()) calStart = c
-                    calLast = c
-                    calLastMs = nowMs
+                    uiHandler.post {
+                        if (calStart.isNaN()) calStart = c
+                        calLast = c
+                        calLastMs = nowMs
+                    }
                     return
                 }
                 if (Math.abs(d) < dead) return
@@ -1760,11 +1774,13 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
         if (sm != null && sensor != null) {
             sm.registerListener(
                 listener, sensor,
-                android.hardware.SensorManager.SENSOR_DELAY_GAME
+                android.hardware.SensorManager.SENSOR_DELAY_GAME,
+                sensorHandler
             )
         }
         onDispose {
             sm?.unregisterListener(listener)
+            sensorThread.quitSafely()
             RingForegroundService.padPreview = false
         }
     }
@@ -2007,7 +2023,30 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
                     }
                 )
                 Text(
-                    "每 8ms 追赶剩余的百分比。调高更跟手但可能过冲，调低更顺滑但略拖",
+                    "追赶的时间常数。调高更跟手但可能过冲，调低更顺滑但略拖",
+                    fontSize = 11.sp,
+                    color = CMutedFg,
+                    modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)
+                )
+                Divider(color = CBorder.copy(alpha = 0.3f))
+                SliderRow(
+                    icon = Icons.Filled.Speed,
+                    title = "输出频率",
+                    valueText = hz.toString() + " Hz",
+                    value = hzIdx.toFloat(),
+                    range = 0f..3f,
+                    onChange = {
+                        val i = it.toInt().coerceIn(0, 3)
+                        hzIdx = i
+                        if (hz != hzSteps[i]) {
+                            hz = hzSteps[i]
+                            Cfg.setPadHz(ctx, hz)
+                        }
+                    }
+                )
+                Text(
+                    "每秒往手柄写多少次。传感器本身只有 50Hz，这颗只影响中间值的细腻度：" +
+                        "125Hz 省电，1000Hz 最顺但更吃 CPU",
                     fontSize = 11.sp,
                     color = CMutedFg,
                     modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)

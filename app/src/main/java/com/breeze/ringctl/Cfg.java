@@ -302,6 +302,15 @@ public class Cfg {
         sp(c).edit().putInt("pad_center_delay", v).apply();
     }
 
+    /** 方向盘：插值输出频率（Hz），125 / 250 / 500 / 1000 */
+    public static int padHz(Context c) {
+        return sp(c).getInt("pad_hz", 250);
+    }
+
+    public static void setPadHz(Context c, int v) {
+        sp(c).edit().putInt("pad_hz", v).apply();
+    }
+
     /** 方向盘：归中范围（度）。只有转到这个范围内才会被慢慢吸回中心 */
     public static int padCenterWindow(Context c) {
         return sp(c).getInt("pad_center_window", 90);

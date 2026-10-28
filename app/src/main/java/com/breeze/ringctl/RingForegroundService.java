@@ -64,6 +64,7 @@ public class RingForegroundService extends Service implements SensorEventListene
     private Sensor ringSensor;
     private Handler handler;
     private HandlerThread emitThread;
+    private HandlerThread sensorThread;
 
     private float lastCounter = Float.NaN;
 
@@ -178,6 +179,10 @@ public class RingForegroundService extends Service implements SensorEventListene
         }
         if (emitThread != null) {
             emitThread.quitSafely();
+        }
+        if (sensorThread != null) {
+            sensorThread.quitSafely();
+            sensorThread = null;
         }
         stopForeground(true);
         super.onDestroy();
@@ -303,7 +308,14 @@ private Notification buildNotification() {
             Log.w(TAG, lastState);
             return;
         }
-        boolean ok = sm.registerListener(this, ringSensor, SensorManager.SENSOR_DELAY_GAME);
+        // 传感器回调放到专用线程：主线程要刷通知、跑保活，混在一起会拖后回调
+        if (sensorThread == null) {
+            sensorThread = new HandlerThread("ring-sensor");
+            sensorThread.start();
+        }
+        boolean ok = sm.registerListener(
+                this, ringSensor, SensorManager.SENSOR_DELAY_GAME,
+                new Handler(sensorThread.getLooper()));
         lastState = ok ? ("已连接 " + ringSensor.getName()) : "注册监听失败";
         // 初始化 root 滚轮用的屏幕坐标
         try {

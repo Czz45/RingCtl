@@ -165,17 +165,33 @@ public class VirtualPad {
     // 做法：不直接发目标值，而是每 8ms 走一小步，在 ~60ms 内追平。
     // 这样一帧的跳跃被摊成 7~8 个中间值，看起来是平滑滑动。
 
-    private static float shownAngle = 0f;   // 当前已发出的角度
+    private static volatile float shownAngle = 0f;   // 当前已发出的角度
     private static Thread glideThread = null;
     private static volatile boolean glideRunning = false;
 
-    /** 启动（或唤醒）插值线程 */
+    /**
+     * 插值线程。
+     *
+     * 关键改动：用「时间常数 + 指数逼近」代替「每 tick 走固定百分比」。
+     *
+     * 固定百分比和 tick 频率强耦合：8ms 走 35%，换成 1ms 还是走 35%，
+     * 同样的目标就会快 8 倍，1000Hz 直接冲过头并且来回震荡。
+     *
+     * 指数模型：
+     *   tau   = 8 / -ln(1 - 跟随速度)      // 与频率无关的时间常数
+     *   alpha = 1 - exp(-dt / tau)
+     *   shown += (target - shown) * alpha
+     *
+     * 这样 125Hz 和 1000Hz 走的是同一条曲线，只是采样点更密。
+     */
     private static void startGlide(Context ctx, float maxDeg) {
         if (glideRunning) return;   // 线程已在跑，它会自己追
         glideRunning = true;
         final Context c = ctx;
         final float md = maxDeg;
         Thread t = new Thread(() -> {
+            long prev = System.nanoTime();
+            long next = prev;
             try {
                 while (true) {
                     float target;
@@ -185,7 +201,7 @@ public class VirtualPad {
                     float cur = shownAngle;
                     float diff = target - cur;
 
-                    if (Math.abs(diff) < 0.5f) {
+                    if (Math.abs(diff) < 0.2f) {
                         // 追平了，退出
                         if (diff != 0f) {
                             shownAngle = target;
@@ -194,19 +210,49 @@ public class VirtualPad {
                         break;
                     }
 
-                    // 每步走剩余差值的 N%（可调），最少 1 度，避免拖很久
-                    float rate = c == null ? 0.35f : Cfg.padSmooth(c);
-                    if (rate < 0.1f) rate = 0.1f;
-                    if (rate > 0.95f) rate = 0.95f;
-                    float step = diff * rate;
-                    if (Math.abs(step) < 1f) step = diff > 0 ? 1f : -1f;
+                    float hz = c == null ? 250f : Cfg.padHz(c);
+                    if (hz < 60f) hz = 60f;
+                    if (hz > 1000f) hz = 1000f;
+                    long periodNs = (long) (1_000_000_000L / hz);
+
+                    long now = System.nanoTime();
+                    // 用真实 dt 算，sleep 抖动不会改变运动曲线
+                    double dtMs = (now - prev) / 1_000_000.0;
+                    prev = now;
+                    if (dtMs < 0.2) dtMs = 0.2;
+                    if (dtMs > 50) dtMs = 50;   // 卡顿时别一步跳太远
+
+                    float s = c == null ? 0.35f : Cfg.padSmooth(c);
+                    if (s < 0.1f) s = 0.1f;
+                    if (s > 0.9f) s = 0.9f;
+                    double tau = 8.0 / -Math.log(1.0 - s);
+                    double alpha = 1.0 - Math.exp(-dtMs / tau);
+
+                    float step = (float) (diff * alpha);
+                    // 差得极小时线性收尾，避免指数逼近的长尾
+                    if (Math.abs(step) < 0.05f) step = diff * 0.5f;
                     shownAngle = cur + step;
                     emitValue(c, shownAngle, md);
 
-                    try {
-                        Thread.sleep(8);
-                    } catch (InterruptedException e) {
-                        break;
+                    // 精确节拍：睡到下一个周期，最后不足 1ms 用自旋补
+                    next += periodNs;
+                    long sleepNs = next - System.nanoTime();
+                    if (sleepNs > 1_000_000L) {
+                        long ms = sleepNs / 1_000_000L - 1;
+                        int ns = (int) (sleepNs % 1_000_000L);
+                        if (ms < 0) ms = 0;
+                        try {
+                            Thread.sleep(ms, ns);
+                        } catch (InterruptedException e) {
+                            break;
+                        }
+                    } else if (sleepNs > 0) {
+                        while (System.nanoTime() < next) {
+                            Thread.yield();
+                        }
+                    } else {
+                        // 落后了，重置节拍，防止越追越慢
+                        next = System.nanoTime();
                     }
                 }
             } catch (Throwable ignored) {
@@ -218,6 +264,8 @@ public class VirtualPad {
         });
         t.setDaemon(true);
         t.setName("PadGlide");
+        // 比普通线程高一点，但别抢 UI
+        t.setPriority(Thread.NORM_PRIORITY + 2);
         t.start();
     }
 
@@ -333,9 +381,14 @@ public class VirtualPad {
             return false;
         }
         try {
-            if (!PadDeviceNative.ensureCreated()) {
-                lastFailMs = now;
-                return false;
+            // 高频输出时不要把 ensureCreated 放在热路径上：
+            // 它每次都进 synchronized + JNI，1000Hz 下纯属浪费。
+            // 已就绪就直接写，没就绪才走创建流程。
+            if (!PadDeviceNative.nativeIsReadySafe()) {
+                if (!PadDeviceNative.ensureCreated()) {
+                    lastFailMs = now;
+                    return false;
+                }
             }
             if (!PadDeviceNative.move(axisX, 0)) {
                 lastFailMs = now;

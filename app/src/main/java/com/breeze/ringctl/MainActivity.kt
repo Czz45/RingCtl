@@ -403,6 +403,8 @@ class RingStateHolder(val ctx: ComponentActivity) {
     var accBusy by mutableStateOf(false)
 
     var enabled by mutableStateOf(Cfg.enabled(ctx))
+    /** 来回扭转手势，与 enabled 互斥，放在这里让两个 Tab 共用 */
+    var twistOn by mutableStateOf(Cfg.twistEnabled(ctx))
     var reverse by mutableStateOf(Cfg.reverse(ctx))
     var fixedDir by mutableStateOf(Cfg.fixedDir(ctx))
     var fixedSide by mutableIntStateOf(Cfg.fixedDirSide(ctx))
@@ -593,6 +595,8 @@ fun ControlTab(
             ) {
                 s.enabled = it
                 Cfg.setEnabled(ctx, it)
+                // 互斥：开滚动就关手势
+                if (it) s.twistOn = false
             }
             Divider(color = CBorder.copy(alpha = 0.3f))
             SwitchRow(
@@ -702,7 +706,6 @@ fun SettingsTab(
     s.PollLifecycle()
 
     // ---------- 来回扭转快捷启动 ----------
-    var twistOn by remember { mutableStateOf(Cfg.twistEnabled(ctx)) }
     var twistType by remember { mutableIntStateOf(Cfg.twistActionType(ctx)) }
     var twistValue by remember { mutableStateOf(Cfg.twistActionValue(ctx)) }
     var twistFlips by remember { mutableIntStateOf(Cfg.twistFlips(ctx)) }
@@ -988,13 +991,15 @@ fun SettingsTab(
                 SwitchRow(
                     icon = Icons.Filled.Gesture,
                     title = "来回扭转",
-                    subtitle = "快速左右扭两下变焦环，直接打开指定功能",
-                    checked = twistOn
+                    subtitle = "快速左右扭两下变焦环，直接打开指定功能（与全局开关互斥）",
+                    checked = s.twistOn
                 ) {
-                    twistOn = it
+                    s.twistOn = it
                     Cfg.setTwistEnabled(ctx, it)
+                    // 互斥：开手势就把滚动关掉，避免转动既滚动又触发动作
+                    if (it) s.enabled = false
                 }
-                if (twistOn) {
+                if (s.twistOn) {
                     Divider(color = CBorder.copy(alpha = 0.3f))
                     Row(
                         Modifier

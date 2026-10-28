@@ -53,6 +53,10 @@ public class Cfg {
 
     public static void setEnabled(Context c, boolean v) {
         sp(c).edit().putBoolean("enabled", v).apply();
+        // 与来回扭转互斥：打开滚动就关掉手势
+        if (v) {
+            sp(c).edit().putBoolean("twist_on", false).apply();
+        }
     }
 
     public static boolean reverse(Context c) {
@@ -347,6 +351,10 @@ public class Cfg {
 
     public static void setTwistEnabled(Context c, boolean v) {
         sp(c).edit().putBoolean("twist_on", v).apply();
+        // 与全局开关互斥：打开手势就关掉滚动
+        if (v) {
+            sp(c).edit().putBoolean("enabled", false).apply();
+        }
     }
 
     /** 目标类型：0 = URI/scheme，1 = 包名 */
@@ -369,7 +377,7 @@ public class Cfg {
 
     /** 每个半程至少转多少计数才算数 */
     public static float twistSwing(Context c) {
-        return sp(c).getFloat("twist_swing", 50f);
+        return sp(c).getFloat("twist_swing", 150f);
     }
 
     public static void setTwistSwing(Context c, float v) {

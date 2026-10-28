@@ -351,6 +351,11 @@ private Notification buildNotification() {
         if (pkg != null && pkg.equals(getPackageName())) {
             return false;
         }
+        // 手势模式独立于全局开关：两者互斥，开了手势全局一定是关的，
+        // 这里必须放行，否则手势永远收不到数据
+        if (Cfg.twistEnabled(this)) {
+            return true;
+        }
         return AppCfg.shouldWork(this, Cfg.enabled(this), pkg);
     }
 
@@ -466,15 +471,24 @@ private Notification buildNotification() {
 
         // ===== 来回扭转：独立于滚动/方向盘模式，也不吃冷却 =====
         TwistDetector td = twistDetector();
-        if (td != null && td.feed(d, SystemClock.elapsedRealtime())) {
-            int at = Cfg.twistActionType(this);
-            String av = Cfg.twistActionValue(this);
-            // 播放控制类不需要填值，启动类必须填
-            boolean needValue = (at == LaunchActions.TYPE_URI || at == LaunchActions.TYPE_PACKAGE);
-            if (!needValue || (av != null && !av.isEmpty())) {
-                doHaptic();
-                LaunchActions.launch(this, at, av);
+        if (td != null) {
+            if (td.feed(d, SystemClock.elapsedRealtime())) {
+                int at = Cfg.twistActionType(this);
+                String av = Cfg.twistActionValue(this);
+                // 播放控制类不需要填值，启动类必须填
+                boolean needValue = (at == LaunchActions.TYPE_URI || at == LaunchActions.TYPE_PACKAGE);
+                if (!needValue || (av != null && !av.isEmpty())) {
+                    doHaptic();
+                    LaunchActions.launch(this, at, av);
+                }
+                // 手势优先：清掉滚动积压并短暂停手，
+                // 否则刚打开的应用会被还在跑的 swipe 滑走
+                pendingPx = 0f;
+                wheelAccum = 0f;
+                cooldownUntilMs = SystemClock.elapsedRealtime() + 800L;
             }
+            // 手势模式下转动只服务手势，不产生滚动/方向盘
+            return;
         }
 
         if (SystemClock.elapsedRealtime() < cooldownUntilMs) {

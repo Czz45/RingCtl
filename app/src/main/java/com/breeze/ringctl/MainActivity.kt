@@ -1687,6 +1687,8 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
     var smooth by remember { mutableFloatStateOf(Cfg.padSmooth(ctx)) }
     var autoCenter by remember { mutableStateOf(Cfg.padAutoCenter(ctx)) }
     var centerDelay by remember { mutableIntStateOf(Cfg.padCenterDelayMs(ctx)) }
+    var centerWindow by remember { mutableIntStateOf(Cfg.padCenterWindow(ctx)) }
+    var centerSpeed by remember { mutableIntStateOf(Cfg.padCenterSpeed(ctx)) }
     var angle by remember { mutableFloatStateOf(VirtualPad.getShownAngle()) }
     var statusKey by remember { mutableIntStateOf(0) }
 
@@ -2028,8 +2030,8 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
                 Divider(color = CBorder.copy(alpha = 0.3f))
                 SwitchRow(
                     icon = Icons.Filled.Refresh,
-                    title = "自动回正",
-                    subtitle = "松手后自动把方向打回中间，适合需要自己回轮的赛车",
+                    title = "自动归中",
+                    subtitle = "转到中间附近时缓慢吸回中心，范围外保持，不跟你抢方向",
                     checked = autoCenter
                 ) {
                     autoCenter = it
@@ -2038,8 +2040,45 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
                 if (autoCenter) {
                     Divider(color = CBorder.copy(alpha = 0.3f))
                     SliderRow(
+                        icon = Icons.Filled.SwapHoriz,
+                        title = "归中范围",
+                        valueText = "±" + centerWindow + "°",
+                        value = centerWindow.toFloat(),
+                        range = 10f..360f,
+                        onChange = {
+                            centerWindow = (it.toInt() / 10) * 10
+                            Cfg.setPadCenterWindow(ctx, centerWindow)
+                        }
+                    )
+                    Text(
+                        "只有转到这个范围内才会被慢慢吸回中心。范围外保持不动，" +
+                            "打大方向时不会跟你抢",
+                        fontSize = 11.sp,
+                        color = CMutedFg,
+                        modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)
+                    )
+                    Divider(color = CBorder.copy(alpha = 0.3f))
+                    SliderRow(
+                        icon = Icons.Filled.Autorenew,
+                        title = "归中速度",
+                        valueText = centerSpeed.toString() + " °/s",
+                        value = centerSpeed.toFloat(),
+                        range = 20f..400f,
+                        onChange = {
+                            centerSpeed = (it.toInt() / 10) * 10
+                            Cfg.setPadCenterSpeed(ctx, centerSpeed)
+                        }
+                    )
+                    Text(
+                        "每秒吸回多少度。90 左右约 1 秒回完 ±90°，想更柔和就调低",
+                        fontSize = 11.sp,
+                        color = CMutedFg,
+                        modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)
+                    )
+                    Divider(color = CBorder.copy(alpha = 0.3f))
+                    SliderRow(
                         icon = Icons.Filled.Timer,
-                        title = "回正延时",
+                        title = "归中延时",
                         valueText = centerDelay.toString() + " ms",
                         value = centerDelay.toFloat(),
                         range = 100f..2000f,
@@ -2049,7 +2088,7 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
                         }
                     )
                     Text(
-                        "松手后等多久开始回正。太短会打断连续微调",
+                        "松手后等多久开始归中。太短会打断连续微调",
                         fontSize = 11.sp,
                         color = CMutedFg,
                         modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)

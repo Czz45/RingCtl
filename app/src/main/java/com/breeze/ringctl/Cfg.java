@@ -188,20 +188,31 @@ public class Cfg {
     //   每圈计数 = 360 / 旧 gain
     //   满舵圈数 = 旧 maxDeg / 360
 
-    /** 方向盘：环转一圈对应的传感器计数（校准值） */
+    /** 方向盘：环转一圈对应的传感器计数（校准值），实测约 4500 */
+    public static final float PAD_COUNTS_DEFAULT = 4500f;
+
     public static float padCountsPerTurn(Context c) {
-        if (sp(c).contains("pad_counts_turn")) {
-            return sp(c).getFloat("pad_counts_turn", 1440f);
+        if (!sp(c).contains("pad_counts_turn")) {
+            return PAD_COUNTS_DEFAULT;
         }
-        float g = sp(c).getFloat("pad_gain", 0.25f);
-        if (g < 0.01f) {
-            g = 0.25f;
+        float v = sp(c).getFloat("pad_counts_turn", PAD_COUNTS_DEFAULT);
+        // 0.6.2/0.6.3 的旧迁移值来自 360/旧gain，默认 gain 0.25 → 1440，
+        // 和实测差得远。落在 1200~1600 且没被刻意设置过时，纠正一次。
+        if (v >= 1200f && v <= 1600f && !sp(c).getBoolean("pad_counts_fixed", false)) {
+            sp(c).edit()
+                    .putFloat("pad_counts_turn", PAD_COUNTS_DEFAULT)
+                    .putBoolean("pad_counts_fixed", true)
+                    .apply();
+            return PAD_COUNTS_DEFAULT;
         }
-        return 360f / g;
+        return v;
     }
 
     public static void setPadCountsPerTurn(Context c, float v) {
-        sp(c).edit().putFloat("pad_counts_turn", v).apply();
+        sp(c).edit()
+                .putFloat("pad_counts_turn", v)
+                .putBoolean("pad_counts_fixed", true)
+                .apply();
     }
 
     /** 方向盘：满舵需要环转几圈 */
@@ -289,6 +300,24 @@ public class Cfg {
 
     public static void setPadCenterDelayMs(Context c, int v) {
         sp(c).edit().putInt("pad_center_delay", v).apply();
+    }
+
+    /** 方向盘：归中范围（度）。只有转到这个范围内才会被慢慢吸回中心 */
+    public static int padCenterWindow(Context c) {
+        return sp(c).getInt("pad_center_window", 90);
+    }
+
+    public static void setPadCenterWindow(Context c, int v) {
+        sp(c).edit().putInt("pad_center_window", v).apply();
+    }
+
+    /** 方向盘：归中速度（度/秒） */
+    public static int padCenterSpeed(Context c) {
+        return sp(c).getInt("pad_center_speed", 90);
+    }
+
+    public static void setPadCenterSpeed(Context c, int v) {
+        sp(c).edit().putInt("pad_center_speed", v).apply();
     }
 
     /** Root 每档滑动像素 */

@@ -134,14 +134,20 @@ public class VirtualPad {
                         cur = angle;
                     }
                     if (cur == 0f) continue;
+                    // 只在「中间附近」才吸回中心：范围内的慢慢回正，
+                    // 范围外（打大方向时）保持不动，不然会被硬拽回来
+                    float win = Cfg.padCenterWindow(app);
+                    if (Math.abs(cur) > win) continue;
                     if (System.currentTimeMillis() - lastTurnMs < Cfg.padCenterDelayMs(app)) {
                         continue;
                     }
-                    // 离中位越远回得越快，接近时收细，避免抖
-                    float step = Math.max(5f, Math.abs(cur) * 0.22f);
+                    // 按「度/秒」换算这一步走多少，线程周期 30ms
+                    float step = Cfg.padCenterSpeed(app) * 0.03f;
+                    if (step < 1f) step = 1f;
                     synchronized (VirtualPad.class) {
                         angle += cur > 0 ? -step : step;
-                        if (Math.abs(angle) < 3f) angle = 0f;
+                        // 贴近中心时直接归零，避免在 1~2 度之间反复抖
+                        if (Math.abs(angle) < 2f) angle = 0f;
                     }
                     startGlide(app, Cfg.padTurnsToFull(app) * 360f);
                 } catch (Throwable ignored) {

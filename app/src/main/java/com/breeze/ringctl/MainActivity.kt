@@ -1534,9 +1534,11 @@ fun SteeringWheelView(
     modifier: Modifier = Modifier
 ) {
     val safeMax = if (maxDeg < 1f) 540f else maxDeg
-    val clamped = angleDeg.coerceIn(-safeMax, safeMax)
-    // 满舵对应 ±135° 的视觉转角
-    val visualDeg = (clamped / safeMax) * 135f
+    // 视觉转角按「摇杆满值 = 135°」换算，但不再预先截断角度。
+    // 转过 maxDeg 之后盘继续转，转多少就显示多少，和手感对得上。
+    val visualDeg = (angleDeg / safeMax) * 135f
+    // 摇杆推力百分比（到 100% 就不再增加，但角度还会继续累计）
+    val pushPct = ((angleDeg / safeMax) * 100f).coerceIn(-100f, 100f)
 
     Box(
         modifier = modifier.fillMaxWidth().height(220.dp),
@@ -1619,14 +1621,14 @@ fun SteeringWheelView(
         // 中心数值
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
-                text = clamped.toInt().toString() + "°",
+                text = angleDeg.toInt().toString() + "°",
                 fontSize = 25.sp,
                 color = CForeground,
                 fontWeight = FontWeight.Medium
             )
             Spacer(Modifier.height(2.dp))
             Text(
-                text = "±" + safeMax.toInt() + "°",
+                text = "满舵 " + safeMax.toInt() + "°　推力 " + pushPct.toInt() + "%",
                 fontSize = 11.sp,
                 color = CMutedFg
             )
@@ -1660,6 +1662,13 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
 
     var maxDeg by remember { mutableIntStateOf(Cfg.padMaxDeg(ctx)) }
     var gain by remember { mutableFloatStateOf(Cfg.padGain(ctx)) }
+    var limitDeg by remember { mutableIntStateOf(Cfg.padLimitDeg(ctx)) }
+    var dead by remember { mutableFloatStateOf(Cfg.padDead(ctx)) }
+    var rev by remember { mutableStateOf(Cfg.padReverse(ctx)) }
+    var curve by remember { mutableIntStateOf(Cfg.padCurve(ctx)) }
+    var smooth by remember { mutableFloatStateOf(Cfg.padSmooth(ctx)) }
+    var autoCenter by remember { mutableStateOf(Cfg.padAutoCenter(ctx)) }
+    var centerDelay by remember { mutableIntStateOf(Cfg.padCenterDelayMs(ctx)) }
     var angle by remember { mutableFloatStateOf(VirtualPad.getShownAngle()) }
     var statusKey by remember { mutableIntStateOf(0) }
 
@@ -1682,7 +1691,6 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
     // ---------- 页面自己订阅变焦环 ----------
     // 不经过控制服务：服务没启动、前台 App 识别失败、使用情况权限没给，
     // 都不影响这里。服务侧看到 padPreview 会主动让路，避免角度重复累加。
-    val reverseDir = remember { Cfg.reverse(ctx) }
     var sensorOk by remember { mutableStateOf(true) }
     var liveDelta by remember { mutableFloatStateOf(0f) }
     var lastUiMs by remember { mutableLongStateOf(0L) }
@@ -1709,8 +1717,8 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
                     lastUiMs = nowMs
                     liveDelta = d
                 }
-                if (Math.abs(d) < 1f) return
-                val step = (if (reverseDir) -d else d) * gain
+                if (Math.abs(d) < dead) return
+                val step = (if (rev) -d else d) * gain
                 VirtualPad.turn(ctx, step, maxDeg.toFloat())
             }
 
@@ -1776,14 +1784,14 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
 
         // ---------- 参数 ----------
         Column(Modifier.padding(horizontal = 16.dp)) {
-            SectionLabel("方向盘参数")
+            SectionLabel("行程")
             SettingsCard {
                 SliderRow(
                     icon = Icons.Filled.RotateRight,
-                    title = "最大转角",
+                    title = "满舵角度",
                     valueText = "±" + maxDeg + "°",
                     value = maxDeg.toFloat(),
-                    range = 90f..900f,
+                    range = 90f..1800f,
                     onChange = {
                         maxDeg = (it.toInt() / 10) * 10
                         Cfg.setPadMaxDeg(ctx, maxDeg)
@@ -1791,7 +1799,25 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
                     }
                 )
                 Text(
-                    "方向盘左右各能打多少度。真车一般一圈半约 540°",
+                    "摇杆推到 100% 需要的环转角。真车一圈半约 540°，想更灵敏就调小",
+                    fontSize = 11.sp,
+                    color = CMutedFg,
+                    modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)
+                )
+                Divider(color = CBorder.copy(alpha = 0.3f))
+                SliderRow(
+                    icon = Icons.Filled.Straighten,
+                    title = "角度上限",
+                    valueText = "±" + limitDeg + "°",
+                    value = limitDeg.toFloat(),
+                    range = 180f..3600f,
+                    onChange = {
+                        limitDeg = (it.toInt() / 10) * 10
+                        Cfg.setPadLimitDeg(ctx, limitDeg)
+                    }
+                )
+                Text(
+                    "盘最多能转多少度。超过满舵后会继续累计（显示真实角度），到上限才停",
                     fontSize = 11.sp,
                     color = CMutedFg,
                     modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)
@@ -1814,6 +1840,114 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
                     color = CMutedFg,
                     modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)
                 )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            SectionLabel("手感")
+            SettingsCard {
+                SliderRow(
+                    icon = Icons.Filled.Tune,
+                    title = "死区",
+                    valueText = String.format("%.1f", dead),
+                    value = dead,
+                    range = 0f..20f,
+                    onChange = {
+                        dead = it
+                        Cfg.setPadDead(ctx, it)
+                    }
+                )
+                Text(
+                    "小于这个值的单帧变化当作抖动丢掉。手重就调大，想极灵敏就调 0",
+                    fontSize = 11.sp,
+                    color = CMutedFg,
+                    modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)
+                )
+                Divider(color = CBorder.copy(alpha = 0.3f))
+                SliderRow(
+                    icon = Icons.Filled.ShowChart,
+                    title = "摇杆曲线",
+                    valueText = when (curve) {
+                        1 -> "柔和"
+                        2 -> "激进"
+                        else -> "线性"
+                    },
+                    value = curve.toFloat(),
+                    range = 0f..2f,
+                    onChange = {
+                        curve = it.toInt()
+                        Cfg.setPadCurve(ctx, curve)
+                    }
+                )
+                Text(
+                    "线性：角度和推力成正比。柔和：中位更细腻，适合巡航。激进：中位更冲，适合漂移",
+                    fontSize = 11.sp,
+                    color = CMutedFg,
+                    modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)
+                )
+                Divider(color = CBorder.copy(alpha = 0.3f))
+                SliderRow(
+                    icon = Icons.Filled.Autorenew,
+                    title = "跟随速度",
+                    valueText = String.format("%.0f%%", smooth * 100),
+                    value = smooth,
+                    range = 0.15f..0.85f,
+                    onChange = {
+                        smooth = it
+                        Cfg.setPadSmooth(ctx, it)
+                    }
+                )
+                Text(
+                    "每 8ms 追赶剩余的百分比。调高更跟手但可能过冲，调低更顺滑但略拖",
+                    fontSize = 11.sp,
+                    color = CMutedFg,
+                    modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            SectionLabel("行为")
+            SettingsCard {
+                SwitchRow(
+                    icon = Icons.Filled.SwapHoriz,
+                    title = "方向反转",
+                    subtitle = "往前转变成往右打，和游戏里的方向对不上时打开",
+                    checked = rev
+                ) {
+                    rev = it
+                    Cfg.setPadReverse(ctx, it)
+                }
+                Divider(color = CBorder.copy(alpha = 0.3f))
+                SwitchRow(
+                    icon = Icons.Filled.Refresh,
+                    title = "自动回正",
+                    subtitle = "松手后自动把方向打回中间，适合需要自己回轮的赛车",
+                    checked = autoCenter
+                ) {
+                    autoCenter = it
+                    Cfg.setPadAutoCenter(ctx, it)
+                }
+                if (autoCenter) {
+                    Divider(color = CBorder.copy(alpha = 0.3f))
+                    SliderRow(
+                        icon = Icons.Filled.Timer,
+                        title = "回正延时",
+                        valueText = centerDelay.toString() + " ms",
+                        value = centerDelay.toFloat(),
+                        range = 100f..2000f,
+                        onChange = {
+                            centerDelay = (it.toInt() / 50) * 50
+                            Cfg.setPadCenterDelayMs(ctx, centerDelay)
+                        }
+                    )
+                    Text(
+                        "松手后等多久开始回正。太短会打断连续微调",
+                        fontSize = 11.sp,
+                        color = CMutedFg,
+                        modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)
+                    )
+                }
             }
 
             Spacer(Modifier.height(16.dp))

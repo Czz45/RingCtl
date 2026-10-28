@@ -55,6 +55,7 @@ public class VirtualPad {
             angle = 0f;
             shownAngle = 0f;
             lastSent = Integer.MIN_VALUE;
+            lastTurnMs = System.currentTimeMillis();
         }
         // 光改内部变量不够，系统里的摇杆还停在上次的值，必须真发一次 0
         try {
@@ -79,24 +80,75 @@ public class VirtualPad {
     }
 
     /**
-     * 累加角度并输出。
+     * 累加真实转角并输出。
+     *
+     * 角度不再被 maxDeg 砍断：maxDeg 只是「摇杆打满」的刻度，
+     * 真实盘面可以继续往同方向转，最多到 padLimitDeg（默认 ±1080，即三圈）。
+     * 摇杆值在换算时单独 clamp，所以超出的部分只是不再增加推力，不会卡住角度。
      *
      * @param deltaDeg 本次转动角度增量
-     * @param maxDeg   最大转角
+     * @param maxDeg   摇杆打满对应的角度
      */
     public static synchronized boolean turn(Context ctx, float deltaDeg, float maxDeg) {
         if (maxDeg <= 1f) maxDeg = 540f;
         // 每次转动都确保设备在（重开机 / 切 App 后可能没建）
         ensureReady(ctx);
+        float limit = ctx == null ? 1080f : Math.max(maxDeg, Cfg.padLimitDeg(ctx));
         angle += deltaDeg;
-        if (angle > maxDeg) {
-            angle = maxDeg;
-        } else if (angle < -maxDeg) {
-            angle = -maxDeg;
+        if (angle > limit) {
+            angle = limit;
+        } else if (angle < -limit) {
+            angle = -limit;
         }
+        lastTurnMs = System.currentTimeMillis();
         // 目标值变化了，启动插值追赶
         startGlide(ctx, maxDeg);
+        // 首次转动时把自动回正的守护线程拉起来（未开启则空转，开销可忽略）
+        ensureCenterThread(ctx);
         return true;
+    }
+
+    /**
+     * 自动回正守护线程。
+     *
+     * 松开变焦环 N 毫秒后，把盘缓慢拉回中位，
+     * 适合「转一下就打方向、松手自动回正」的用法。
+     */
+    private static void ensureCenterThread(Context ctx) {
+        if (sCenterStarted || ctx == null) return;
+        sCenterStarted = true;
+        final Context app = ctx.getApplicationContext() == null ? ctx : ctx.getApplicationContext();
+        Thread t = new Thread(() -> {
+            while (true) {
+                try {
+                    Thread.sleep(30L);
+                } catch (InterruptedException e) {
+                    return;
+                }
+                try {
+                    if (!Cfg.padAutoCenter(app)) continue;
+                    float cur;
+                    synchronized (VirtualPad.class) {
+                        cur = angle;
+                    }
+                    if (cur == 0f) continue;
+                    if (System.currentTimeMillis() - lastTurnMs < Cfg.padCenterDelayMs(app)) {
+                        continue;
+                    }
+                    // 离中位越远回得越快，接近时收细，避免抖
+                    float step = Math.max(5f, Math.abs(cur) * 0.22f);
+                    synchronized (VirtualPad.class) {
+                        angle += cur > 0 ? -step : step;
+                        if (Math.abs(angle) < 3f) angle = 0f;
+                    }
+                    startGlide(app, Cfg.padMaxDeg(app));
+                } catch (Throwable ignored) {
+                }
+            }
+        });
+        t.setDaemon(true);
+        t.setName("PadCenter");
+        t.start();
     }
 
     // ==================== 插值（消除跳跃感） ====================
@@ -134,8 +186,11 @@ public class VirtualPad {
                         break;
                     }
 
-                    // 每步走剩余差值的 35%，最少 1 度，避免拖很久
-                    float step = diff * 0.35f;
+                    // 每步走剩余差值的 N%（可调），最少 1 度，避免拖很久
+                    float rate = c == null ? 0.35f : Cfg.padSmooth(c);
+                    if (rate < 0.1f) rate = 0.1f;
+                    if (rate > 0.95f) rate = 0.95f;
+                    float step = diff * rate;
                     if (Math.abs(step) < 1f) step = diff > 0 ? 1f : -1f;
                     shownAngle = cur + step;
                     emitValue(c, shownAngle, md);
@@ -190,15 +245,48 @@ public class VirtualPad {
         t.start();
     }
 
-    /** 把某个角度值发出去 */
-    private static void emitValue(Context ctx, float ang, float maxDeg) {
+    /** 上次转动的时间，自动回正用 */
+    private static long lastTurnMs = 0L;
+    private static volatile boolean sCenterStarted = false;
+
+    /**
+     * 真实角度 → 摇杆值。
+     *
+     * 这里做三件事，都是之前缺的：
+     *   1. 用 maxDeg 归一化后单独 clamp，超出的角度不会顶死盘面
+     *   2. 按用户选的曲线重映射，柔和档让中位更细腻，激进档让中位更灵敏
+     *   3. 只在这里 clamp，调用方不需要关心 32000 的边界
+     */
+    private static int toAxis(Context ctx, float ang, float maxDeg) {
         if (maxDeg <= 1f) maxDeg = 540f;
-        int v = Math.round(ang / maxDeg * 32000f);
+        float u = ang / maxDeg;
+        if (u > 1f) {
+            u = 1f;
+        } else if (u < -1f) {
+            u = -1f;
+        }
+        int curve = ctx == null ? 0 : Cfg.padCurve(ctx);
+        if (u != 0f) {
+            float a = Math.abs(u);
+            if (curve == 1) {
+                a = (float) Math.pow(a, 1.6);       // 柔和：小角度更细
+            } else if (curve == 2) {
+                a = (float) Math.pow(a, 0.6);       // 激进：小角度更冲
+            }
+            u = u > 0 ? a : -a;
+        }
+        int v = Math.round(u * 32000f);
         if (v > 32000) {
             v = 32000;
         } else if (v < -32000) {
             v = -32000;
         }
+        return v;
+    }
+
+    /** 把某个角度值发出去 */
+    private static void emitValue(Context ctx, float ang, float maxDeg) {
+        int v = toAxis(ctx, ang, maxDeg);
         if (v == lastSent) return;
         if (sendNative(v)) {
             lastSent = v;
@@ -210,14 +298,8 @@ public class VirtualPad {
 
     /** 输出当前角度 */
     public static synchronized boolean push(Context ctx, float maxDeg) {
-        if (maxDeg <= 1f) maxDeg = 450f;
-
-        int v = Math.round(angle / maxDeg * 32000f);
-        if (v > 32000) {
-            v = 32000;
-        } else if (v < -32000) {
-            v = -32000;
-        }
+        if (maxDeg <= 1f) maxDeg = 540f;
+        int v = toAxis(ctx, angle, maxDeg);
 
         // 数值没变就不用重复下发
         if (v == lastSent) {

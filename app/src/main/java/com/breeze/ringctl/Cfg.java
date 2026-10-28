@@ -156,7 +156,7 @@ public class Cfg {
         sp(c).edit().putBoolean("root_mouse", v).apply();
     }
 
-    /** 方向盘：最大转角（度），左右各这么多 */
+    /** 方向盘：摇杆打满对应的环转角（度） */
     public static int padMaxDeg(Context c) {
         return sp(c).getInt("pad_max_deg", 540);
     }
@@ -172,6 +172,69 @@ public class Cfg {
 
     public static void setPadGain(Context c, float v) {
         sp(c).edit().putFloat("pad_gain", v).apply();
+    }
+
+    /** 方向盘：真实转角上限（度）。盘可以转超过摇杆满值，最多到这里 */
+    public static int padLimitDeg(Context c) {
+        return sp(c).getInt("pad_limit_deg", 1080);
+    }
+
+    public static void setPadLimitDeg(Context c, int v) {
+        sp(c).edit().putInt("pad_limit_deg", v).apply();
+    }
+
+    /** 方向盘：单帧死区，小于这个值当抖动丢掉 */
+    public static float padDead(Context c) {
+        return sp(c).getFloat("pad_dead", 2f);
+    }
+
+    public static void setPadDead(Context c, float v) {
+        sp(c).edit().putFloat("pad_dead", v).apply();
+    }
+
+    /** 方向盘：方向反转 */
+    public static boolean padReverse(Context c) {
+        return sp(c).getBoolean("pad_reverse", false);
+    }
+
+    public static void setPadReverse(Context c, boolean v) {
+        sp(c).edit().putBoolean("pad_reverse", v).apply();
+    }
+
+    /** 方向盘：摇杆曲线 0=线性 1=柔和 2=激进 */
+    public static int padCurve(Context c) {
+        return sp(c).getInt("pad_curve", 0);
+    }
+
+    public static void setPadCurve(Context c, int v) {
+        sp(c).edit().putInt("pad_curve", v).apply();
+    }
+
+    /** 方向盘：插值追赶比例 0.15~0.85，越大越跟手 */
+    public static float padSmooth(Context c) {
+        return sp(c).getFloat("pad_smooth", 0.35f);
+    }
+
+    public static void setPadSmooth(Context c, float v) {
+        sp(c).edit().putFloat("pad_smooth", v).apply();
+    }
+
+    /** 方向盘：松手自动回正 */
+    public static boolean padAutoCenter(Context c) {
+        return sp(c).getBoolean("pad_auto_center", false);
+    }
+
+    public static void setPadAutoCenter(Context c, boolean v) {
+        sp(c).edit().putBoolean("pad_auto_center", v).apply();
+    }
+
+    /** 方向盘：自动回正延时（毫秒） */
+    public static int padCenterDelayMs(Context c) {
+        return sp(c).getInt("pad_center_delay", 700);
+    }
+
+    public static void setPadCenterDelayMs(Context c, int v) {
+        sp(c).edit().putInt("pad_center_delay", v).apply();
     }
 
     /** Root 每档滑动像素 */

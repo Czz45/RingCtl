@@ -442,13 +442,14 @@ private Notification buildNotification() {
         // 放在防抖/死区之前，赛车游戏要跟手，不能被滚动模式的
         // 方向确认帧拖慢；同时不受冷却时间影响。
         if (pMode() == Cfg.MODE_WHEEL_PAD) {
-            if (Math.abs(d) < 1f) {
+            if (Math.abs(d) < Cfg.padDead(this)) {
                 return;
             }
             VirtualPad.ensureReady(this);
             float gain = Cfg.padGain(this);
             float maxDeg = Cfg.padMaxDeg(this);
-            boolean rev = Cfg.reverse(this);
+            // 方向盘有独立的方向开关，不再跟随滚动模式的反转设置
+            boolean rev = Cfg.padReverse(this);
             VirtualPad.turn(this, (rev ? -d : d) * gain, maxDeg);
             lastDataMs = SystemClock.elapsedRealtime();
             dbgDelta = d;

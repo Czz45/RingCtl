@@ -326,12 +326,12 @@ private Notification buildNotification() {
      *   3. 未单独设置的 App，跟随全局开关
      */
     private boolean isActiveForCurrentApp() {
+        // 方向盘页面自己订阅了传感器，服务必须让路，否则角度会被重复累加
+        if (padPreview) {
+            return false;
+        }
         // 优先 UsageStats（不受输入法/悬浮窗干扰），失败退回无障碍
         String pkg = ForegroundApp.get(this);
-        // 方向盘预览：只有本 App 在前台时才放行，避免离开页面后误触发
-        if (padPreviewActive()) {
-            return true;
-        }
         if (ForegroundApp.isIgnorable(pkg)) {
             return false;
         }
@@ -355,15 +355,6 @@ private Notification buildNotification() {
 
     private int pMode() {
         return AppCfg.intOf(this, fgPkg(), "mode", Cfg.mode(this));
-    }
-
-    /** 是否正在方向盘页面里做预览（页面打开 + 本 App 在前台） */
-    private boolean padPreviewActive() {
-        if (!padPreview) {
-            return false;
-        }
-        String p = fgPkg();
-        return p != null && p.equals(getPackageName());
     }
 
     private int pAxis() {
@@ -430,7 +421,7 @@ private Notification buildNotification() {
             return;
         }
         // 预览模式跳过冷却：方向盘不需要节流
-        if (!padPreviewActive() && SystemClock.elapsedRealtime() < cooldownUntilMs) {
+        if (SystemClock.elapsedRealtime() < cooldownUntilMs) {
             return;
         }
         float[] v = e.values;
@@ -448,9 +439,9 @@ private Notification buildNotification() {
         lastCounter = counter;
 
         // ===== 方向盘：把转动变成摇杆角度，直接发出去 =====
-        // 放在防抖/死区之前，页面上的方向盘要能跟手，不能被滚动模式的
+        // 放在防抖/死区之前，赛车游戏要跟手，不能被滚动模式的
         // 方向确认帧拖慢；同时不受冷却时间影响。
-        if (padPreviewActive() || pMode() == Cfg.MODE_WHEEL_PAD) {
+        if (pMode() == Cfg.MODE_WHEEL_PAD) {
             if (Math.abs(d) < 1f) {
                 return;
             }

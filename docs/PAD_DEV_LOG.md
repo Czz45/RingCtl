@@ -498,3 +498,76 @@ MODE_WHEEL_PAD = 6;  // 方向盘（虚拟手柄）
 - [ ] 扳机键（LTRIGGER/RTRIGGER）映射
 - [ ] 方向盘页面实时显示手柄轴值（调试用）
 - [ ] 横屏分栏布局
+
+---
+
+## 十二、坑：App 内方向盘不响应
+
+### 症状
+
+方向盘独立页面上，转动变焦环，盘纹丝不动，摇杆也没输出。但在别的 App（赛车游戏）里一切正常。
+
+### 根因
+
+服务里有一条防自激判断：
+
+```java
+// 自己这个 App 不响应，避免自己转自己
+if (pkg != null && pkg.equals(getPackageName())) {
+    return false;
+}
+```
+
+变焦环的数据只在 `RingForegroundService.onSensorChanged` 里产生。
+用户在 App 自己页面里转环时，前台包名就是 `com.breeze.ringctl`，
+这条判断直接把事件全部丢弃 —— 后面的角度计算、`VirtualPad.turn()` 一步都没走到。
+`VirtualPad.getAngle()` 因此恒为 0，页面上的盘自然不动。
+
+v0.5.9 试图用「预览开关 + 前台包名放行」修补，仍然失败。原因是放行依赖
+`ForegroundApp.get()` 正确返回自己：
+- 没给「使用情况访问权限」时返回 null
+- `isIgnorable(null)` 判定为真，退到无障碍服务的 `foregroundPkg`
+- 无障碍没开 → 还是 null → 放行条件不成立
+
+一层层依赖下来，任何一个环没通，页面就不动。
+
+### 最终方案：页面自己订阅传感器
+
+```
+方向盘页面 registerListener（SENSOR_DELAY_GAME）
+  ↓ values[2] 求相邻帧差
+  ↓ × gain → VirtualPad.turn()
+libringpad.so → /dev/uinput → ABS_X
+```
+
+同时 `RingForegroundService.padPreview = true`，让服务在 `isActiveForCurrentApp()`
+最开头直接返回 false（**让路**，不是放行），避免两处同时累加角度。
+
+```java
+private boolean isActiveForCurrentApp() {
+    if (padPreview) {
+        return false;   // 页面接管了，服务别插嘴
+    }
+    ...
+}
+```
+
+### 必须处理的副作用
+
+`padPreview` 是静态标记，如果只在 `DisposableEffect` 里开关，用户按 Home 键
+离开时页面并没有被销毁，标记一直是 true → 在别的 App 里转环会没有反应。
+
+所以 `MainActivity` 里配合生命周期：
+
+```kotlin
+override fun onPause()  { RingForegroundService.padPreview = false }
+override fun onResume() { if (wheelVisible) RingForegroundService.padPreview = true }
+```
+
+### 经验
+
+1. **「自己 App 不响应」这类防自激逻辑，会顺带砍掉自测入口** —— 加功能时先想清楚哪些路径被它挡住
+2. **不要用前台包名去做「当前是否在本页面」的判断** —— UsageStats 权限、无障碍状态任何一个缺失都会让判断失效
+3. **页面级功能尽量自己拿数据源** —— 绕开服务、绕开前台识别，链路越短越不容易断
+4. **静态开关一定要配生命周期** —— 否则按 Home 之后行为就和预期不一致
+5. **页面加一行原始 Δ 显示**（`最近 Δ = N`）—— 一眼区分「没数据」和「没输出」，省掉一轮猜

@@ -79,6 +79,9 @@ private val AppColors = darkColorScheme(
 
 class MainActivity : ComponentActivity() {
 
+    /** 方向盘页面是否正在显示，供 onResume 恢复预览标记 */
+    var wheelVisible = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -90,6 +93,20 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onResume() {
+        super.onResume()
+        // 回到前台时，若仍停在方向盘页面，恢复预览
+        if (wheelVisible) {
+            RingForegroundService.padPreview = true
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // 离开 App 必须让路，否则在别的应用里转环会被这个页面吃掉
+        RingForegroundService.padPreview = false
+    }
 }
 
 @Composable
@@ -97,6 +114,11 @@ fun MainShell(activity: ComponentActivity) {
     var tab by remember { mutableIntStateOf(0) }
     var showAbout by remember { mutableStateOf(false) }
     var showWheel by remember { mutableStateOf(false) }
+
+    // 记录方向盘页面是否显示，配合 Activity 的 onResume/onPause 控制预览标记
+    LaunchedEffect(showWheel) {
+        (activity as? MainActivity)?.wheelVisible = showWheel
+    }
 
     if (showWheel) {
         SteeringWheelScreen(activity) { showWheel = false }
@@ -1612,6 +1634,19 @@ fun SteeringWheelView(
     }
 }
 
+/** 找变焦环传感器：先按名称模糊匹配，再按自定义 type 兜底 */
+private fun findRingSensor(sm: android.hardware.SensorManager): android.hardware.Sensor? {
+    val all = sm.getSensorList(android.hardware.Sensor.TYPE_ALL)
+    for (s in all) {
+        val n = s.name ?: continue
+        if (n.lowercase().contains("optical")) return s
+    }
+    for (s in all) {
+        if (s.type == RingForegroundService.TYPE_OPTICAL_TRACKING) return s
+    }
+    return null
+}
+
 /**
  * 方向盘独立页面。
  *
@@ -1644,14 +1679,53 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
         }
     }
 
-    // 进页面开启预览：让本 App 自己也能收到变焦环数据
-    // 顺带确保控制服务在跑（服务停了就没有传感器回调，方向盘必然不动）
+    // ---------- 页面自己订阅变焦环 ----------
+    // 不经过控制服务：服务没启动、前台 App 识别失败、使用情况权限没给，
+    // 都不影响这里。服务侧看到 padPreview 会主动让路，避免角度重复累加。
+    val reverseDir = remember { Cfg.reverse(ctx) }
+    var sensorOk by remember { mutableStateOf(true) }
+    var liveDelta by remember { mutableFloatStateOf(0f) }
+    var lastUiMs by remember { mutableLongStateOf(0L) }
     DisposableEffect(Unit) {
         RingForegroundService.padPreview = true
-        if (!RingForegroundService.running) {
-            RingForegroundService.start(ctx)
+        val sm = ctx.getSystemService(Context.SENSOR_SERVICE) as? android.hardware.SensorManager
+        val sensor = sm?.let { findRingSensor(it) }
+        sensorOk = sensor != null
+        var lastCounter = Float.NaN
+        val listener = object : android.hardware.SensorEventListener {
+            override fun onSensorChanged(e: android.hardware.SensorEvent?) {
+                val v = e?.values ?: return
+                if (v.size < 3) return
+                val c = v[2]
+                if (lastCounter.isNaN()) {
+                    lastCounter = c
+                    return
+                }
+                val d = c - lastCounter
+                lastCounter = c
+                // 诊断用：每 120ms 更新一次页面上的原始 Δ，方便判断是没数据还是没输出
+                val nowMs = android.os.SystemClock.elapsedRealtime()
+                if (nowMs - lastUiMs > 120L) {
+                    lastUiMs = nowMs
+                    liveDelta = d
+                }
+                if (Math.abs(d) < 1f) return
+                val step = (if (reverseDir) -d else d) * gain
+                VirtualPad.turn(ctx, step, maxDeg.toFloat())
+            }
+
+            override fun onAccuracyChanged(s: android.hardware.Sensor?, accuracy: Int) {}
         }
-        onDispose { RingForegroundService.padPreview = false }
+        if (sm != null && sensor != null) {
+            sm.registerListener(
+                listener, sensor,
+                android.hardware.SensorManager.SENSOR_DELAY_GAME
+            )
+        }
+        onDispose {
+            sm?.unregisterListener(listener)
+            RingForegroundService.padPreview = false
+        }
     }
 
     // 进页就确保手柄存在
@@ -1756,6 +1830,13 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
                             status,
                             fontSize = 15.sp,
                             color = if (status == "手柄已创建") CAccent else CForeground
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            if (sensorOk) "传感器：已连接　最近 Δ = ${liveDelta.toInt()}"
+                            else "传感器：未找到，转环不会有数据",
+                            fontSize = 11.sp,
+                            color = if (sensorOk) CMutedFg else CDestructive
                         )
                         if (lastErr != "无") {
                             Spacer(Modifier.height(4.dp))

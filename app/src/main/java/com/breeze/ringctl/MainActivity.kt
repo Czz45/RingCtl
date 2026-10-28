@@ -14,6 +14,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -27,6 +28,14 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color as ComposeColor
@@ -87,6 +96,12 @@ class MainActivity : ComponentActivity() {
 fun MainShell(activity: ComponentActivity) {
     var tab by remember { mutableIntStateOf(0) }
     var showAbout by remember { mutableStateOf(false) }
+    var showWheel by remember { mutableStateOf(false) }
+
+    if (showWheel) {
+        SteeringWheelScreen(activity) { showWheel = false }
+        return
+    }
 
     if (showAbout) {
         AboutScreen(activity) { showAbout = false }
@@ -221,9 +236,9 @@ fun MainShell(activity: ComponentActivity) {
                 .windowInsetsPadding(WindowInsets.systemBars)
         ) {
             when (tab) {
-                0 -> ControlTab(activity, shared) { showAbout = true }
+                0 -> ControlTab(activity, shared, { showAbout = true }, { showWheel = true })
                 1 -> AppTabHost(activity, shared)
-                else -> SettingsTab(activity, shared) { showAbout = true }
+                else -> SettingsTab(activity, shared, { showAbout = true }, { showWheel = true })
             }
         }
         // 底部导航
@@ -340,7 +355,12 @@ class RingStateHolder(val ctx: ComponentActivity) {
 // ==================== Tab 1：控制 ====================
 
 @Composable
-fun ControlTab(activity: ComponentActivity, s: RingStateHolder, onShowAbout: () -> Unit) {
+fun ControlTab(
+    activity: ComponentActivity,
+    s: RingStateHolder,
+    onShowAbout: () -> Unit,
+    onShowWheel: () -> Unit
+) {
     val ctx = activity
     s.PollLifecycle()
 
@@ -576,7 +596,12 @@ fun ControlTab(activity: ComponentActivity, s: RingStateHolder, onShowAbout: () 
 // ==================== Tab 3：设置 ====================
 
 @Composable
-fun SettingsTab(activity: ComponentActivity, s: RingStateHolder, onShowAbout: () -> Unit) {
+fun SettingsTab(
+    activity: ComponentActivity,
+    s: RingStateHolder,
+    onShowAbout: () -> Unit,
+    onShowWheel: () -> Unit
+) {
     val ctx = activity
     s.PollLifecycle()
 
@@ -651,111 +676,38 @@ fun SettingsTab(activity: ComponentActivity, s: RingStateHolder, onShowAbout: ()
                 }
             }
 
-            // 方向盘参数
+            // 方向盘参数（已拆到独立页面）
             if (s.mode == Cfg.MODE_WHEEL_PAD) {
                 Spacer(Modifier.height(12.dp))
-                SectionLabel("方向盘参数")
-                SettingsCard {
-                    SliderRow(
-                        icon = Icons.Filled.RotateRight,
-                        title = "最大转角",
-                        valueText = "±${s.padMaxDeg}°",
-                        value = s.padMaxDeg.toFloat(),
-                        range = 90f..900f,
-                        onChange = {
-                            s.padMaxDeg = ((it.toInt() / 10) * 10)
-                            Cfg.setPadMaxDeg(ctx, s.padMaxDeg)
-                            VirtualPad.reset()
-                        }
-                    )
-                    Text(
-                        "方向盘左右各能打多少度。真车一般一圈半约 450°",
-                        fontSize = 11.sp,
-                        color = CMutedFg,
-                        modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)
-                    )
-                    Divider(color = CBorder.copy(alpha = 0.3f))
-                    SliderRow(
-                        icon = Icons.Filled.Speed,
-                        title = "转动灵敏度",
-                        valueText = String.format("%.1f 倍", s.padGain),
-                        value = s.padGain,
-                        range = 0.05f..3.0f,
-                        onChange = {
-                            s.padGain = it
-                            Cfg.setPadGain(ctx, it)
-                        }
-                    )
-                    Text(
-                        "转一格等于多少度。太大容易打满，太小转半天不动",
-                        fontSize = 11.sp,
-                        color = CMutedFg,
-                        modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)
-                    )
-                    Divider(color = CBorder.copy(alpha = 0.3f))
-                    var statusKey by remember { mutableIntStateOf(0) }
-                    // 每秒刷新一次状态，自动创建设备后能自己变绿
-                    LaunchedEffect(Unit) {
-                        while (true) {
-                            delay(1000)
-                            statusKey++
-                        }
-                    }
-                    val status = remember(statusKey) { VirtualPad.statusText() }
-                    val lastErr = remember(statusKey) { PadDeviceNative.getLastError() }
-                    Row(
-                        Modifier.fillMaxWidth().padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text("手柄状态", fontSize = 15.sp, color = CForeground)
-                            Spacer(Modifier.height(3.dp))
-                            Text(
-                                status,
-                                fontSize = 12.sp,
-                                color = if (status == "手柄已创建") CAccent else CMutedFg
-                            )
-                            if (lastErr != "无") {
-                                Spacer(Modifier.height(3.dp))
-                                Text(
-                                    "错误: " + lastErr,
-                                    fontSize = 11.sp,
-                                    color = CMutedFg
-                                )
-                            }
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        SmallBtn("重试") {
-                            Thread {
-                                try {
-                                    PadDeviceNative.reset()
-                                    PadDeviceNative.ensureCreated()
-                                } catch (e: Throwable) {
-                                }
-                            }.start()
-                            statusKey++
-                        }
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
                 SettingsCard {
                     Row(
-                        Modifier.fillMaxWidth().padding(14.dp),
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { onShowWheel() }
+                            .padding(14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Icon(
+                            Icons.Filled.SportsMotorsports,
+                            contentDescription = null,
+                            tint = CAccent,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("回正方向盘", fontSize = 15.sp, color = CForeground)
+                            Text("方向盘设置", fontSize = 15.sp, color = CForeground)
                             Spacer(Modifier.height(3.dp))
                             Text(
-                                "把累计角度归零，方向盘回到居中",
+                                "查看方向盘 / 调转角与灵敏度",
                                 fontSize = 12.sp,
                                 color = CMutedFg
                             )
                         }
-                        SmallBtn("回正") {
-                            VirtualPad.reset()
-                            VirtualPad.push(ctx, s.padMaxDeg.toFloat())
-                        }
+                        Icon(
+                            Icons.Filled.ChevronRight,
+                            contentDescription = null,
+                            tint = CMutedFg
+                        )
                     }
                 }
             }
@@ -1549,6 +1501,280 @@ private fun isBatteryUnrestricted(ctx: Context): Boolean {
 }
 
 private fun String.toUri(): android.net.Uri = android.net.Uri.parse(this)
+/**
+ * 方向盘可视化控件。
+ * 实时显示当前累计角度，跟着变焦环转动。
+ */
+@Composable
+fun SteeringWheelView(
+    angleDeg: Float,
+    maxDeg: Float,
+    modifier: Modifier = Modifier
+) {
+    val safeMax = if (maxDeg < 1f) 540f else maxDeg
+    val clamped = angleDeg.coerceIn(-safeMax, safeMax)
+    // 满舵对应 ±135° 的视觉转角
+    val visualDeg = (clamped / safeMax) * 135f
+
+    Box(
+        modifier = modifier.fillMaxWidth().height(220.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.size(196.dp)) {
+            val cx = size.width / 2f
+            val cy = size.height / 2f
+            val r = size.minDimension / 2f
+
+            // 外圈轨道
+            drawCircle(
+                color = CBorder.copy(alpha = 0.35f),
+                radius = r - 4.dp.toPx(),
+                style = Stroke(width = 5.dp.toPx())
+            )
+
+            // 正上方刻度
+            val topA = -PI / 2
+            drawLine(
+                color = CAccent.copy(alpha = 0.85f),
+                start = Offset(
+                    cx + (cos(topA) * (r - 22.dp.toPx())).toFloat(),
+                    cy + (sin(topA) * (r - 22.dp.toPx())).toFloat()
+                ),
+                end = Offset(
+                    cx + (cos(topA) * (r - 1.dp.toPx())).toFloat(),
+                    cy + (sin(topA) * (r - 1.dp.toPx())).toFloat()
+                ),
+                strokeWidth = 3.dp.toPx(),
+                cap = StrokeCap.Round
+            )
+
+            // 转动的方向盘
+            rotate(degrees = visualDeg, pivot = Offset(cx, cy)) {
+                val rim = r - 26.dp.toPx()
+
+                drawCircle(
+                    color = CForeground.copy(alpha = 0.92f),
+                    radius = rim,
+                    style = Stroke(width = 12.dp.toPx())
+                )
+
+                // 三根辐条
+                listOf(
+                    Offset(cx - rim, cy),
+                    Offset(cx + rim, cy),
+                    Offset(cx, cy + rim)
+                ).forEach { end ->
+                    drawLine(
+                        color = CForeground.copy(alpha = 0.92f),
+                        start = Offset(cx, cy),
+                        end = end,
+                        strokeWidth = 11.dp.toPx(),
+                        cap = StrokeCap.Round
+                    )
+                }
+
+                // 中心
+                drawCircle(color = CAccent, radius = 15.dp.toPx())
+                drawCircle(
+                    color = CForeground.copy(alpha = 0.9f),
+                    radius = 15.dp.toPx(),
+                    style = Stroke(width = 2.5.dp.toPx())
+                )
+
+                // 12 点位置高亮块
+                drawArc(
+                    color = CAccent,
+                    startAngle = -106f,
+                    sweepAngle = 32f,
+                    useCenter = false,
+                    topLeft = Offset(cx - rim, cy - rim),
+                    size = Size(rim * 2, rim * 2),
+                    style = Stroke(width = 6.dp.toPx(), cap = StrokeCap.Round)
+                )
+            }
+        }
+
+        // 中心数值
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = clamped.toInt().toString() + "°",
+                fontSize = 25.sp,
+                color = CForeground,
+                fontWeight = FontWeight.Medium
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = "±" + safeMax.toInt() + "°",
+                fontSize = 11.sp,
+                color = CMutedFg
+            )
+        }
+    }
+}
+
+/**
+ * 方向盘独立页面。
+ *
+ * 上方是可交互的方向盘，跟着变焦环实时转动；
+ * 下方是该模式的参数和手柄状态。
+ */
+@Composable
+fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
+    val ctx = activity
+    BackHandler(enabled = true) { onBack() }
+
+    var maxDeg by remember { mutableIntStateOf(Cfg.padMaxDeg(ctx)) }
+    var gain by remember { mutableFloatStateOf(Cfg.padGain(ctx)) }
+    var angle by remember { mutableFloatStateOf(VirtualPad.getAngle()) }
+    var statusKey by remember { mutableIntStateOf(0) }
+
+    // 实时读取方向盘的累计角度（与发给手柄的值同步）
+    LaunchedEffect(Unit) {
+        while (true) {
+            angle = VirtualPad.getAngle()
+            delay(16)
+        }
+    }
+
+    // 状态每 500ms 刷新
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(500)
+            statusKey++
+        }
+    }
+
+    // 进页就确保手柄存在
+    LaunchedEffect(Unit) {
+        VirtualPad.ensureReady(ctx)
+    }
+
+    val status = remember(statusKey) { VirtualPad.statusText() }
+    val lastErr = remember(statusKey) { PadDeviceNative.getLastError() }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .windowInsetsPadding(WindowInsets.systemBars)
+    ) {
+        // ---------- 顶栏 ----------
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 56.dp)
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.Filled.ArrowBack, contentDescription = "返回", tint = CForeground)
+            }
+            Text(
+                "方向盘",
+                fontSize = 19.sp,
+                color = CForeground,
+                fontWeight = FontWeight.Medium
+            )
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = {
+                VirtualPad.reset()
+                VirtualPad.push(ctx, maxDeg.toFloat())
+            }) {
+                Text("回正", color = CAccent)
+            }
+        }
+
+        // ---------- 方向盘本体 ----------
+        SteeringWheelView(
+            angleDeg = angle,
+            maxDeg = maxDeg.toFloat()
+        )
+
+        // ---------- 参数 ----------
+        Column(Modifier.padding(horizontal = 16.dp)) {
+            SectionLabel("方向盘参数")
+            SettingsCard {
+                SliderRow(
+                    icon = Icons.Filled.RotateRight,
+                    title = "最大转角",
+                    valueText = "±" + maxDeg + "°",
+                    value = maxDeg.toFloat(),
+                    range = 90f..900f,
+                    onChange = {
+                        maxDeg = (it.toInt() / 10) * 10
+                        Cfg.setPadMaxDeg(ctx, maxDeg)
+                        VirtualPad.reset()
+                    }
+                )
+                Text(
+                    "方向盘左右各能打多少度。真车一般一圈半约 540°",
+                    fontSize = 11.sp,
+                    color = CMutedFg,
+                    modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)
+                )
+                Divider(color = CBorder.copy(alpha = 0.3f))
+                SliderRow(
+                    icon = Icons.Filled.Speed,
+                    title = "转动灵敏度",
+                    valueText = String.format("%.2f 倍", gain),
+                    value = gain,
+                    range = 0.05f..3.0f,
+                    onChange = {
+                        gain = it
+                        Cfg.setPadGain(ctx, it)
+                    }
+                )
+                Text(
+                    "转一格等于多少度。觉得跳就往下调，觉得转半天不动就往上调",
+                    fontSize = 11.sp,
+                    color = CMutedFg,
+                    modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // ---------- 手柄状态 ----------
+            SectionLabel("手柄状态")
+            SettingsCard {
+                Row(
+                    Modifier.fillMaxWidth().padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            status,
+                            fontSize = 15.sp,
+                            color = if (status == "手柄已创建") CAccent else CForeground
+                        )
+                        if (lastErr != "无") {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "错误: " + lastErr,
+                                fontSize = 11.sp,
+                                color = CMutedFg
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    SmallBtn("重建") {
+                        Thread {
+                            try {
+                                PadDeviceNative.reset()
+                                PadDeviceNative.ensureCreated()
+                            } catch (e: Throwable) {
+                            }
+                        }.start()
+                        statusKey++
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
 @Composable
 fun AboutScreen(activity: ComponentActivity, onBack: () -> Unit) {
     val ctx = activity

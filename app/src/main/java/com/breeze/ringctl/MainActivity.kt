@@ -133,6 +133,7 @@ fun MainShell(activity: ComponentActivity) {
     // 启动时检查更新，有新版直接弹窗
     var newVersion by remember { mutableStateOf<String?>(null) }
     var newVersionUrl by remember { mutableStateOf(UpdateChecker.URL_RELEASES) }
+    var newVersionLog by remember { mutableStateOf("") }
     var showUpdateDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -140,6 +141,7 @@ fun MainShell(activity: ComponentActivity) {
             override fun onUpdate(latest: String, url: String, log: String) {
                 newVersion = latest
                 newVersionUrl = url
+                newVersionLog = log
                 showUpdateDialog = true
             }
 
@@ -169,6 +171,31 @@ fun MainShell(activity: ComponentActivity) {
                         color = CAccent,
                         fontWeight = FontWeight.Medium
                     )
+                    if (newVersionLog.isNotBlank()) {
+                        Spacer(Modifier.height(12.dp))
+                        Divider(color = CBorder.copy(alpha = 0.3f))
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            "更新内容",
+                            fontSize = 13.sp,
+                            color = CForeground,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 260.dp)
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            Text(
+                                newVersionLog,
+                                fontSize = 12.sp,
+                                color = CMutedFg,
+                                lineHeight = 18.sp
+                            )
+                        }
+                    }
                 }
             },
             confirmButton = {
@@ -2276,7 +2303,24 @@ private fun AppDetailScreen(activity: ComponentActivity, pkg: String?, onBack: (
                     mode = Cfg.MODE_SEGMENT
                     if (ovMode) AppCfg.setInt(ctx, pkg, "mode", mode)
                 }
-
+                Divider(color = CBorder.copy(alpha = 0.3f))
+                ModeRow(
+                    Icons.Filled.SportsMotorsports,
+                    "方向盘（原生注入）",
+                    "这个 App 用虚拟手柄摇杆，适合赛车游戏",
+                    mode == Cfg.MODE_WHEEL_PAD
+                ) {
+                    mode = Cfg.MODE_WHEEL_PAD
+                    if (ovMode) AppCfg.setInt(ctx, pkg, "mode", mode)
+                    // 选了方向盘就立刻把柄建好，不用等转环
+                    Thread {
+                        try {
+                            PadDeviceNative.load()
+                            PadDeviceNative.ensureCreated()
+                        } catch (e: Throwable) {
+                        }
+                    }.start()
+                }
             }
 
             Spacer(Modifier.height(20.dp))

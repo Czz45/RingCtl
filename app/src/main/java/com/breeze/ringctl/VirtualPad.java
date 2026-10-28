@@ -103,12 +103,14 @@ public class VirtualPad {
         } else if (angle < -limit) {
             angle = -limit;
         }
-        // 只有「真的在转」才算一次输入：手搭在环上的细微噪声
-        // 不该反复重置归中计时，否则归中永远等不到开始
-        if (Math.abs(deltaDeg) >= 1f) {
-            lastTurnMs = System.currentTimeMillis();
-            sCenterBuzzed = false;
-        }
+        // 任何一次 turn 都算「用户在操作」，无条件重置归中计时。
+        //
+        // 这里原来卡了个 |delta| >= 1° 的阈值，本意是防手抖噪声打断归中，
+        // 结果把「慢转」也一起挡了：调用方已经用死区过滤过噪声，
+        // 慢转小步到达这里时时间戳不更新 → 归中立刻把这点角度吃掉 →
+        // 手感就是「转不动、粘住」，得快速甩一下才能挣脱。
+        lastTurnMs = System.currentTimeMillis();
+        sCenterBuzzed = false;
         // 触边震动：只有「从内部撞到边界」才震，一直顶着不会反复响
         if (ctx != null
                 && Math.abs(angle) >= limit - 0.01f
@@ -298,6 +300,17 @@ public class VirtualPad {
             } finally {
                 synchronized (VirtualPad.class) {
                     glideRunning = false;
+                }
+                // 退出和 turn() 之间存在竞态：本线程判断「追平了」准备 break 的瞬间，
+                // turn 可能刚好改了目标并调用 startGlide，而那时 glideRunning 还是 true，
+                // 新目标就被丢弃了 —— 表现是「转一下没反应，再转才动」。
+                // 这里补一次检查，把漏掉的目标接上。
+                float gap;
+                synchronized (VirtualPad.class) {
+                    gap = Math.abs(angle - shownAngle);
+                }
+                if (gap >= 0.2f || centerActive(c)) {
+                    startGlide(c, md);
                 }
             }
         });

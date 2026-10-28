@@ -12,8 +12,8 @@ android {
         applicationId = "com.breeze.ringctl"
         minSdk = 26
         targetSdk = 36
-        versionCode = 10
-        versionName = "0.4.0"
+        versionCode = 11
+        versionName = "0.5.0"
     }
 
     buildTypes {
@@ -24,6 +24,22 @@ android {
 
     buildFeatures {
         compose = true
+    }
+    // 本地是 arm64 环境，NDK 只有 x86_64 编译器，跑不起来；
+    // 传 -PenableNative=true 时才启用 native 编译（GitHub Actions 用）
+    if (project.hasProperty("enableNative")) {
+        externalNativeBuild {
+            cmake {
+                path = file("src/main/cpp/CMakeLists.txt")
+                version = "3.22.1"
+            }
+        }
+        ndkVersion = "27.0.12077973"
+        defaultConfig {
+            ndk {
+                abiFilters += listOf("arm64-v8a")
+            }
+        }
     }
 
     compileOptions {

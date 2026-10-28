@@ -274,6 +274,8 @@ class RingStateHolder(val ctx: ComponentActivity) {
     var rootSwipe by mutableStateOf(Cfg.rootSwipe(ctx))
     var rootRoll by mutableStateOf(Cfg.rootRoll(ctx))
     var rootStep by mutableIntStateOf(Cfg.rootStepPx(ctx))
+    var padMaxDeg by mutableIntStateOf(Cfg.padMaxDeg(ctx))
+    var padGain by mutableFloatStateOf(Cfg.padGain(ctx))
     var rootMouse by mutableStateOf(Cfg.rootMouse(ctx))
     var haptic by mutableStateOf(Cfg.haptic(ctx))
     var hapticAmp by mutableIntStateOf(Cfg.hapticAmp(ctx))
@@ -592,6 +594,100 @@ fun SettingsTab(activity: ComponentActivity, s: RingStateHolder, onShowAbout: ()
                 ) {
                     s.mode = Cfg.MODE_SEGMENT
                     Cfg.setMode(ctx, s.mode)
+                    VirtualPad.stop()
+                }
+                if (s.hasRoot) {
+                    Divider(color = CBorder.copy(alpha = 0.3f))
+                    ModeRow(
+                        Icons.Filled.SportsMotorsports,
+                        "方向盘（虚拟手柄）",
+                        "延迟较高（约 200ms~1s），不建议日常使用",
+                        s.mode == Cfg.MODE_WHEEL_PAD
+                    ) {
+                        s.mode = Cfg.MODE_WHEEL_PAD
+                        Cfg.setMode(ctx, s.mode)
+                        VirtualPad.reset()
+                    }
+                }
+            }
+
+            // 方向盘参数
+            if (s.mode == Cfg.MODE_WHEEL_PAD) {
+                Spacer(Modifier.height(12.dp))
+                SectionLabel("方向盘参数")
+                SettingsCard {
+                    SliderRow(
+                        icon = Icons.Filled.RotateRight,
+                        title = "最大转角",
+                        valueText = "±${s.padMaxDeg}°",
+                        value = s.padMaxDeg.toFloat(),
+                        range = 90f..900f,
+                        onChange = {
+                            s.padMaxDeg = ((it.toInt() / 10) * 10)
+                            Cfg.setPadMaxDeg(ctx, s.padMaxDeg)
+                            VirtualPad.reset()
+                        }
+                    )
+                    Text(
+                        "方向盘左右各能打多少度。真车一般一圈半约 450°",
+                        fontSize = 11.sp,
+                        color = CMutedFg,
+                        modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)
+                    )
+                    Divider(color = CBorder.copy(alpha = 0.3f))
+                    SliderRow(
+                        icon = Icons.Filled.Speed,
+                        title = "转动灵敏度",
+                        valueText = String.format("%.1f 倍", s.padGain),
+                        value = s.padGain,
+                        range = 0.2f..10.0f,
+                        onChange = {
+                            s.padGain = it
+                            Cfg.setPadGain(ctx, it)
+                        }
+                    )
+                    Text(
+                        "转一格等于多少度。太大容易打满，太小转半天不动",
+                        fontSize = 11.sp,
+                        color = CMutedFg,
+                        modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)
+                    )
+                    Divider(color = CBorder.copy(alpha = 0.3f))
+                    Row(
+                        Modifier.fillMaxWidth().padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("手柄状态", fontSize = 15.sp, color = CForeground)
+                            Spacer(Modifier.height(3.dp))
+                            Text(
+                                VirtualPad.statusText(),
+                                fontSize = 12.sp,
+                                color = CMutedFg
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                SettingsCard {
+                    Row(
+                        Modifier.fillMaxWidth().padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("回正方向盘", fontSize = 15.sp, color = CForeground)
+                            Spacer(Modifier.height(3.dp))
+                            Text(
+                                "把累计角度归零，方向盘回到居中",
+                                fontSize = 12.sp,
+                                color = CMutedFg
+                            )
+                        }
+                        SmallBtn("回正") {
+                            VirtualPad.reset()
+                            VirtualPad.push(ctx, s.padMaxDeg.toFloat())
+                        }
+                    }
                 }
             }
 

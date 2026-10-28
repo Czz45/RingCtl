@@ -79,6 +79,7 @@ public class RingForegroundService extends Service implements SensorEventListene
     public void onCreate() {
         super.onCreate();
         createChannel();
+        VirtualPad.init(this);
         sm = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
         startForegroundCompat();
 
@@ -460,6 +461,17 @@ float d = counter - lastCounter;
 
         boolean reverse = Cfg.reverse(this);
         float signedD = reverse ? -d : d;
+
+        // ===== 方向盘模式：把转动变成摇杆角度，直接发出去 =====
+        // ===== 方向盘模式：转成摇杆值，发广播给 RingHook 注入 =====
+        if (pMode() == Cfg.MODE_WHEEL_PAD) {
+            float gain = Cfg.padGain(this);
+            float maxDeg = Cfg.padMaxDeg(this);
+            float deg = signedD * gain;
+            VirtualPad.turn(this, deg, maxDeg);
+            lastDataMs = SystemClock.elapsedRealtime();
+            return;
+        }
 
         // 固定方向：不管正转反转，只按选定的方向输出
         if (pFixedDir()) {

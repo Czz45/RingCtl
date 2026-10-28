@@ -21,6 +21,9 @@ public class Cfg {
     /** 分段滑动：原来的表冠/滚轮/翻页三种合并后的统一模式 */
     public static final int MODE_SEGMENT = 5;
 
+    /** 方向盘：虚拟手柄左摇杆模拟方向盘角度 */
+    public static final int MODE_WHEEL_PAD = 6;
+
     /** 固定方向：固定往「正」方向（顺时针贡献正向） */
     public static final int FIXED_POSITIVE = 0;
     /** 固定方向：固定往「反」方向 */
@@ -151,6 +154,24 @@ public class Cfg {
 
     public static void setRootMouse(Context c, boolean v) {
         sp(c).edit().putBoolean("root_mouse", v).apply();
+    }
+
+    /** 方向盘：最大转角（度），左右各这么多 */
+    public static int padMaxDeg(Context c) {
+        return sp(c).getInt("pad_max_deg", 450);
+    }
+
+    public static void setPadMaxDeg(Context c, int v) {
+        sp(c).edit().putInt("pad_max_deg", v).apply();
+    }
+
+    /** 方向盘：转动灵敏度（1 个传感器单位 = 多少度） */
+    public static float padGain(Context c) {
+        return sp(c).getFloat("pad_gain", 1.0f);
+    }
+
+    public static void setPadGain(Context c, float v) {
+        sp(c).edit().putFloat("pad_gain", v).apply();
     }
 
     /** Root 每档滑动像素 */

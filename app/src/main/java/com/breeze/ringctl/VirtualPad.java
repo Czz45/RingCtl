@@ -96,13 +96,26 @@ public class VirtualPad {
         float limit = ctx == null
                 ? 1080f
                 : Math.max(maxDeg, Cfg.padLimitTurns(ctx) * 360f);
+        float before = angle;
         angle += deltaDeg;
         if (angle > limit) {
             angle = limit;
         } else if (angle < -limit) {
             angle = -limit;
         }
-        lastTurnMs = System.currentTimeMillis();
+        // 只有「真的在转」才算一次输入：手搭在环上的细微噪声
+        // 不该反复重置归中计时，否则归中永远等不到开始
+        if (Math.abs(deltaDeg) >= 1f) {
+            lastTurnMs = System.currentTimeMillis();
+            sCenterBuzzed = false;
+        }
+        // 触边震动：只有「从内部撞到边界」才震，一直顶着不会反复响
+        if (ctx != null
+                && Math.abs(angle) >= limit - 0.01f
+                && Math.abs(before) < limit - 0.01f
+                && Cfg.padHapticEdge(ctx)) {
+            haptic(ctx, true);
+        }
         // 目标值变化了，启动插值追赶
         startGlide(ctx, maxDeg);
         // 首次转动时把自动回正的守护线程拉起来（未开启则空转，开销可忽略）
@@ -116,6 +129,13 @@ public class VirtualPad {
      * 松开变焦环 N 毫秒后，把盘缓慢拉回中位，
      * 适合「转一下就打方向、松手自动回正」的用法。
      */
+    /**
+     * 归中看门狗。
+     *
+     * 只负责「到点了就把插值线程叫起来」，改角度的事交给 PadGlide 做。
+     * 之前是这里每 30ms 改一次目标值，插值线程同时在追，
+     * 两个节奏错开就会在 0 附近来回跳 —— 用户看到的抽搐就是这么来的。
+     */
     private static void ensureCenterThread(Context ctx) {
         if (sCenterStarted || ctx == null) return;
         sCenterStarted = true;
@@ -123,32 +143,14 @@ public class VirtualPad {
         Thread t = new Thread(() -> {
             while (true) {
                 try {
-                    Thread.sleep(30L);
+                    Thread.sleep(40L);
                 } catch (InterruptedException e) {
                     return;
                 }
                 try {
-                    if (!Cfg.padAutoCenter(app)) continue;
-                    float cur;
-                    synchronized (VirtualPad.class) {
-                        cur = angle;
-                    }
-                    if (cur == 0f) continue;
-                    // 只在「中间附近」才吸回中心：范围内的慢慢回正，
-                    // 范围外（打大方向时）保持不动，不然会被硬拽回来
-                    float win = Cfg.padCenterWindow(app);
-                    if (Math.abs(cur) > win) continue;
-                    if (System.currentTimeMillis() - lastTurnMs < Cfg.padCenterDelayMs(app)) {
-                        continue;
-                    }
-                    // 按「度/秒」换算这一步走多少，线程周期 30ms
-                    float step = Cfg.padCenterSpeed(app) * 0.03f;
-                    if (step < 1f) step = 1f;
-                    synchronized (VirtualPad.class) {
-                        angle += cur > 0 ? -step : step;
-                        // 贴近中心时直接归零，避免在 1~2 度之间反复抖
-                        if (Math.abs(angle) < 2f) angle = 0f;
-                    }
+                    // 插值线程还在跑就不用管，它自己会处理归中
+                    if (glideRunning) continue;
+                    if (!centerActive(app)) continue;
                     startGlide(app, Cfg.padTurnsToFull(app) * 360f);
                 } catch (Throwable ignored) {
                 }
@@ -194,22 +196,6 @@ public class VirtualPad {
             long next = prev;
             try {
                 while (true) {
-                    float target;
-                    synchronized (VirtualPad.class) {
-                        target = angle;
-                    }
-                    float cur = shownAngle;
-                    float diff = target - cur;
-
-                    if (Math.abs(diff) < 0.2f) {
-                        // 追平了，退出
-                        if (diff != 0f) {
-                            shownAngle = target;
-                            emitValue(c, target, md);
-                        }
-                        break;
-                    }
-
                     float hz = c == null ? 250f : Cfg.padHz(c);
                     if (hz < 60f) hz = 60f;
                     if (hz > 1000f) hz = 1000f;
@@ -220,6 +206,51 @@ public class VirtualPad {
                     double dtMs = (now - prev) / 1_000_000.0;
                     prev = now;
                     if (dtMs < 0.2) dtMs = 0.2;
+
+                    float target;
+                    synchronized (VirtualPad.class) {
+                        target = angle;
+                    }
+
+                    // ===== 归中 =====
+                    // 放在插值循环里做，和输出同频。
+                    // 之前是独立线程每 30ms 改一次目标值，插值线程同时在追，
+                    // 两个节奏错开就会在 0 附近来回跳（用户看到的"抽搐"）。
+                    boolean centering = centerActive(c);
+                    if (centering) {
+                        float delta = Cfg.padCenterSpeed(c) * (float) dtMs / 1000f;
+                        if (delta < 0.005f) delta = 0.005f;
+                        float nt = target > 0f ? target - delta : target + delta;
+                        if (target > 0f ? nt <= 0f : nt >= 0f) {
+                            nt = 0f;
+                        }
+                        synchronized (VirtualPad.class) {
+                            angle = nt;
+                        }
+                        target = nt;
+                        if (nt == 0f && !sCenterBuzzed) {
+                            sCenterBuzzed = true;
+                            if (Cfg.padHapticCenter(c)) {
+                                haptic(c, false);
+                            }
+                        }
+                    }
+
+                    float cur = shownAngle;
+                    float diff = target - cur;
+
+                    if (Math.abs(diff) < 0.2f) {
+                        // 追平了
+                        if (diff != 0f) {
+                            shownAngle = target;
+                            emitValue(c, target, md);
+                        }
+                        // 还在归中的话不能退出，否则归中会停在半路
+                        if (!centering) {
+                            break;
+                        }
+                    }
+
                     if (dtMs > 50) dtMs = 50;   // 卡顿时别一步跳太远
 
                     float s = c == null ? 0.35f : Cfg.padSmooth(c);
@@ -304,6 +335,42 @@ public class VirtualPad {
     /** 上次转动的时间，自动回正用 */
     private static long lastTurnMs = 0L;
     private static volatile boolean sCenterStarted = false;
+    /** 本轮归中是否已经震过（到位只震一次，重新转动后复位） */
+    private static volatile boolean sCenterBuzzed = false;
+    private static long sLastHapticMs = 0L;
+
+    /** 极短震动，用于触边 / 归中到位的触觉反馈 */
+    private static void haptic(Context ctx, boolean strong) {
+        if (ctx == null) return;
+        long now = System.currentTimeMillis();
+        if (now - sLastHapticMs < 90L) return;
+        sLastHapticMs = now;
+        try {
+            android.os.Vibrator v = (android.os.Vibrator)
+                    ctx.getSystemService(Context.VIBRATOR_SERVICE);
+            if (v == null || !v.hasVibrator()) return;
+            int ms = strong ? 35 : 16;
+            int amp = strong ? 200 : 120;
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                v.vibrate(android.os.VibrationEffect.createOneShot(ms, amp));
+            } else {
+                v.vibrate(ms);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** 当前是否应该处在「归中」状态：开了开关、落在范围内、且松手够久 */
+    private static boolean centerActive(Context c) {
+        if (c == null || !Cfg.padAutoCenter(c)) return false;
+        float cur;
+        synchronized (VirtualPad.class) {
+            cur = angle;
+        }
+        if (cur == 0f) return false;
+        if (Math.abs(cur) > Cfg.padCenterWindow(c)) return false;
+        return System.currentTimeMillis() - lastTurnMs >= Cfg.padCenterDelayMs(c);
+    }
 
     /**
      * 真实角度 → 摇杆值。

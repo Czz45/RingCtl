@@ -1691,6 +1691,8 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
         mutableIntStateOf(hzSteps.indexOf(hz).let { if (it < 0) 1 else it })
     }
     var autoCenter by remember { mutableStateOf(Cfg.padAutoCenter(ctx)) }
+    var hapticCenter by remember { mutableStateOf(Cfg.padHapticCenter(ctx)) }
+    var hapticEdge by remember { mutableStateOf(Cfg.padHapticEdge(ctx)) }
     var centerDelay by remember { mutableIntStateOf(Cfg.padCenterDelayMs(ctx)) }
     var centerWindow by remember { mutableIntStateOf(Cfg.padCenterWindow(ctx)) }
     var centerSpeed by remember { mutableIntStateOf(Cfg.padCenterSpeed(ctx)) }
@@ -2132,6 +2134,26 @@ fun SteeringWheelScreen(activity: ComponentActivity, onBack: () -> Unit) {
                         color = CMutedFg,
                         modifier = Modifier.padding(start = 50.dp, bottom = 10.dp)
                     )
+                    Divider(color = CBorder.copy(alpha = 0.3f))
+                    SwitchRow(
+                        icon = Icons.Filled.Vibration,
+                        title = "归中到位震动",
+                        subtitle = "回正到中心时轻震一下，不用盯着屏幕确认",
+                        checked = hapticCenter
+                    ) {
+                        hapticCenter = it
+                        Cfg.setPadHapticCenter(ctx, it)
+                    }
+                }
+                Divider(color = CBorder.copy(alpha = 0.3f))
+                SwitchRow(
+                    icon = Icons.Filled.Vibration,
+                    title = "触边震动",
+                    subtitle = "转到角度上限时震一下，提醒已经打满，不用接着拧",
+                    checked = hapticEdge
+                ) {
+                    hapticEdge = it
+                    Cfg.setPadHapticEdge(ctx, it)
                 }
             }
 

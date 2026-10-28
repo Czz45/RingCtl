@@ -311,6 +311,24 @@ public class Cfg {
         sp(c).edit().putInt("pad_hz", v).apply();
     }
 
+    /** 方向盘：归中到位震动 */
+    public static boolean padHapticCenter(Context c) {
+        return sp(c).getBoolean("pad_haptic_center", true);
+    }
+
+    public static void setPadHapticCenter(Context c, boolean v) {
+        sp(c).edit().putBoolean("pad_haptic_center", v).apply();
+    }
+
+    /** 方向盘：打到极限位置震动 */
+    public static boolean padHapticEdge(Context c) {
+        return sp(c).getBoolean("pad_haptic_edge", true);
+    }
+
+    public static void setPadHapticEdge(Context c, boolean v) {
+        sp(c).edit().putBoolean("pad_haptic_edge", v).apply();
+    }
+
     /** 方向盘：归中范围（度）。只有转到这个范围内才会被慢慢吸回中心 */
     public static int padCenterWindow(Context c) {
         return sp(c).getInt("pad_center_window", 90);
